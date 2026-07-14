@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#f7f2ec">
+  <title>운동 인증 챌린지 🏋️‍♀️</title>
+  <meta name="description" content="친구들과 함께하는 운동 인증 챌린지 — 매일 인증하고, 랭킹 겨루고, 벌금은 피하자!">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="운동인증">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="phone">
+    <!-- 로그인 / 온보딩 게이트 (로그인 전) -->
+    <div id="gate" class="gate" hidden></div>
+
+    <!-- 앱 본체 (로그인 후) -->
+    <div id="app" hidden>
+      <div class="statusbar"></div>
+      <main id="view"></main>
+      <nav id="nav">
+        <button class="nav-item" data-screen="home"><span class="nav-icon">🏠</span><span class="nav-label">홈</span></button>
+        <button class="nav-item" data-screen="calendar"><span class="nav-icon">📅</span><span class="nav-label">캘린더</span></button>
+        <button class="nav-item nav-verify" data-screen="verify"><span class="nav-icon">📸</span><span class="nav-label">인증</span></button>
+        <button class="nav-item" data-screen="ranking"><span class="nav-icon">🏆</span><span class="nav-label">랭킹</span></button>
+        <button class="nav-item" data-screen="profile"><span class="nav-icon">👤</span><span class="nav-label">내정보</span></button>
+      </nav>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

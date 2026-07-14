@@ -1,0 +1,16 @@
+{
+  "name": "운동 인증 챌린지",
+  "short_name": "운동인증",
+  "description": "친구들과 함께하는 운동 인증 챌린지 — 매일 인증하고 랭킹 겨루기",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f2ec",
+  "theme_color": "#f7f2ec",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "maskable" }
+  ]
+}

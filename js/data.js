@@ -1,0 +1,387 @@
+/* =========================================================================
+   데이터 계층 (어댑터 패턴)
+   - firebase-config.js 의 값을 채우면  → FirebaseStore (실시간·다기기 공유)
+   - 비워두면                            → LocalStore (브라우저 데모)
+   앱(app.js)은 아래 DB 인터페이스만 사용하고, 어느 모드인지 신경 쓰지 않는다.
+
+   DB 공개 API
+     DB.init()                         → Promise, 초기화(필요 시 Firebase SDK 로드)
+     DB.mode                           → 'firebase' | 'local'
+     DB.needsLogin()                   → 로그인 화면을 보여야 하는가
+     DB.login({ name, room })          → Promise, 세션 시작/참여
+     DB.logout()                       → Promise
+     DB.onData(cb)                     → 데이터 스냅샷 구독. cb(snapshot)
+     DB.saveChallenge(patch)           → 챌린지 설정 변경
+     DB.saveVerification(payload)      → 오늘 인증 등록/수정 (payload.photo = dataURL|null)
+     DB.toggleCheer(verifId)           → 응원 토글
+     DB.reset()                        → (로컬 전용) 데모 데이터 재시드
+     DB.inviteInfo()                   → { room, url } 초대 정보
+
+   snapshot 형태 (두 모드 공통 정규화)
+     { mode, me:{id,name,color}, challenge, people:{uid:{id,name,avatar,color}},
+       verifications:[{id,userId,date,createdAt,type,duration,message,photo,cheers,cheeredByMe}],
+       history }
+   ========================================================================= */
+(function () {
+  'use strict';
+
+  var PALETTE = [
+    'oklch(80% 0.13 155)', // 초록
+    'oklch(75% 0.16 25)',  // 빨강
+    'oklch(78% 0.13 300)', // 보라
+    'oklch(78% 0.13 230)', // 파랑
+    'oklch(80% 0.14 60)',  // 주황
+    'oklch(75% 0.13 330)'  // 핑크
+  ];
+  var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산'];
+
+  /* ---------- 날짜 유틸 ---------- */
+  function ymd(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function today() { return ymd(new Date()); }
+  function addDays(dateStr, n) { var d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d); }
+  function avatarOf(name) { return (name || '?').trim().charAt(0) || '?'; }
+
+  /* ---------- 구독/알림 ---------- */
+  var listeners = [];
+  var snapshot = null;
+  function onData(cb) { listeners.push(cb); if (snapshot) cb(snapshot); }
+  function emit(snap) { snapshot = snap; listeners.forEach(function (f) { f(snap); }); }
+
+  /* people 맵 만들기: 참여자 uid 배열 + 이름맵 → 색상 배정 */
+  function buildPeople(participantIds, nameOf) {
+    var people = {};
+    participantIds.forEach(function (uid, i) {
+      var nm = nameOf(uid);
+      people[uid] = { id: uid, name: nm, avatar: avatarOf(nm), color: PALETTE[i % PALETTE.length] };
+    });
+    return people;
+  }
+
+  /* =====================================================================
+     LocalStore — 브라우저 localStorage 데모 모드
+     ===================================================================== */
+  var STORE_KEY = 'wchallenge:v1';
+  var SESS_KEY = 'wchallenge:session';
+
+  var LocalStore = {
+    mode: 'local',
+    raw: null,
+    session: null,
+
+    init: function () {
+      try { this.session = JSON.parse(localStorage.getItem(SESS_KEY)); } catch (e) {}
+      try { this.raw = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
+      return Promise.resolve();
+    },
+    needsLogin: function () { return !this.session; },
+
+    login: function (opts) {
+      this.session = { name: (opts.name || '나').trim() };
+      localStorage.setItem(SESS_KEY, JSON.stringify(this.session));
+      if (!this.raw) { this.raw = this._seed(); this._save(); }
+      else { this.raw.names.me = this.session.name; this._save(); }
+      this._emit();
+      return Promise.resolve();
+    },
+    logout: function () {
+      localStorage.removeItem(SESS_KEY);
+      this.session = null;
+      return Promise.resolve();
+    },
+
+    saveChallenge: function (patch) {
+      Object.assign(this.raw.challenge, patch);
+      // 데모: 참여자 add/remove, 이름 변경도 patch 로 넘어옴
+      if (patch.participants) this.raw.challenge.participants = patch.participants;
+      this._save(); this._emit(); return Promise.resolve();
+    },
+    saveVerification: function (payload) {
+      var existing = this.raw.verifications.find(function (v) { return v.userId === 'me' && v.date === today(); });
+      if (existing) { Object.assign(existing, payload); existing.createdAt = new Date().toISOString(); }
+      else {
+        var maxId = this.raw.verifications.reduce(function (m, v) { return Math.max(m, v.id); }, 0);
+        this.raw.verifications.push(Object.assign({ id: maxId + 1, userId: 'me', date: today(), createdAt: new Date().toISOString(), cheers: 0 }, payload));
+      }
+      this._save(); this._emit(); return Promise.resolve();
+    },
+    toggleCheer: function (id) {
+      var v = this.raw.verifications.find(function (x) { return x.id === id; });
+      if (!v) return Promise.resolve();
+      if (this.raw.cheeredByMe[id]) { this.raw.cheeredByMe[id] = false; v.cheers = Math.max(0, v.cheers - 1); }
+      else { this.raw.cheeredByMe[id] = true; v.cheers++; }
+      this._save(); this._emit(); return Promise.resolve();
+    },
+    reset: function () { this.raw = this._seed(); this._save(); this._emit(); return Promise.resolve(); },
+    inviteInfo: function () { return { room: null, url: null }; },
+
+    _save: function () { localStorage.setItem(STORE_KEY, JSON.stringify(this.raw)); },
+    _emit: function () {
+      var raw = this.raw;
+      var people = buildPeople(raw.challenge.participants, function (uid) { return raw.names[uid] || uid; });
+      emit({
+        mode: 'local',
+        me: people['me'],
+        challenge: raw.challenge,
+        people: people,
+        verifications: raw.verifications.map(function (v) {
+          return Object.assign({}, v, { cheeredByMe: !!raw.cheeredByMe[v.id] });
+        }),
+        history: raw.history
+      });
+    },
+
+    _seed: function () {
+      var verifications = [], id = 1;
+      var pattern = { minji: 1.0, me: 0.85, taeho: 0.6 };
+      var msgs = {
+        minji: ['오늘도 하체 부셨습니다 🍗', '아침 러닝 완료!', '어깨 뿌셨다', '요가로 몸 풀기'],
+        me: ['비 오는데 뛰었다 칭찬해줘', '오늘 컨디션 최고', '겨우 했다...', '홈트 30분'],
+        taeho: ['퇴근하고 헬스장', '오랜만에 운동', '살려주세요', '등산 다녀옴']
+      };
+      var types = { minji: ['웨이트', '러닝', '요가'], me: ['러닝', '홈트', '웨이트'], taeho: ['웨이트', '등산', '홈트'] };
+      function pseudo(str) { var h = 2166136261; for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 10000) / 10000; }
+      for (var back = 14; back >= 1; back--) {
+        var date = addDays(today(), -back);
+        Object.keys(pattern).forEach(function (pid) {
+          if (pseudo(pid + date) < pattern[pid]) {
+            verifications.push({
+              id: id++, userId: pid, date: date, createdAt: new Date(date + 'T19:30:00').toISOString(),
+              type: types[pid][Math.floor(pseudo('t' + pid + date) * types[pid].length)],
+              duration: 30 + Math.floor(pseudo('d' + pid + date) * 6) * 10,
+              message: msgs[pid][Math.floor(pseudo('m' + pid + date) * msgs[pid].length)],
+              photo: null, cheers: Math.floor(pseudo('c' + pid + date) * 4)
+            });
+          }
+        });
+      }
+      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 6e5).toISOString(), type: '웨이트', duration: 45, message: '오늘도 하체 부셨습니다 🍗', photo: null, cheers: 2 });
+      return {
+        names: { me: (this.session && this.session.name) || '나', minji: '민지', taeho: '태호' },
+        challenge: {
+          name: '운동 미루면 치킨값 내기', durationDays: 30, startDate: addDays(today(), -18),
+          participants: ['me', 'minji', 'taeho'], penalty: 5000, reward: '주간 1등에게 나머지가 커피 쏘기 ☕', deadline: '23:00'
+        },
+        verifications: verifications, cheeredByMe: {},
+        history: [
+          { name: '6월 홈트 챌린지', result: '2등 · 12,000원 받음', medal: '🥈' },
+          { name: '5월 러닝 챌린지', result: '1등 · 커피 받음 ☕', medal: '👑' }
+        ]
+      };
+    }
+  };
+
+  /* =====================================================================
+     FirebaseStore — Firestore + Auth(익명) + Storage 실시간 모드
+     ===================================================================== */
+  var FirebaseStore = {
+    mode: 'firebase',
+    fb: null, db: null, auth: null, storage: null,
+    uid: null, session: null, room: null,
+    challengeData: null, verifs: [], unsub: [],
+
+    init: function () {
+      var self = this;
+      try { self.session = JSON.parse(localStorage.getItem(SESS_KEY)); } catch (e) {}
+      return loadFirebaseSdk().then(function () {
+        self.fb = window.firebase;
+        self.fb.initializeApp(window.FIREBASE_CONFIG);
+        self.auth = self.fb.auth();
+        self.db = self.fb.firestore();
+        self.storage = self.fb.storage();
+        return new Promise(function (resolve) {
+          self.auth.onAuthStateChanged(function (user) {
+            self.uid = user ? user.uid : null;
+            // 이미 세션(방+이름)이 있으면 자동 재참여
+            if (user && self.session && self.session.room) {
+              self._join(self.session.name, self.session.room).then(resolve, resolve);
+            } else { resolve(); }
+          });
+        });
+      });
+    },
+    needsLogin: function () { return !(this.uid && this.session && this.session.room); },
+
+    login: function (opts) {
+      var self = this;
+      var name = (opts.name || '나').trim();
+      var room = (opts.room || 'my-crew').trim().toLowerCase().replace(/\s+/g, '-');
+      return this.auth.signInAnonymously().then(function (cred) {
+        self.uid = cred.user.uid;
+        return self._join(name, room);
+      });
+    },
+    logout: function () {
+      var self = this;
+      this._detach();
+      localStorage.removeItem(SESS_KEY);
+      this.session = null;
+      return this.auth.signOut().catch(function () {});
+    },
+
+    _join: function (name, room) {
+      var self = this;
+      self.room = room;
+      self.session = { name: name, room: room };
+      localStorage.setItem(SESS_KEY, JSON.stringify(self.session));
+      var ref = self.db.collection('challenges').doc(room);
+      return self.db.runTransaction(function (tx) {
+        return tx.get(ref).then(function (doc) {
+          if (!doc.exists) {
+            // 방이 없으면 새 챌린지 생성 (첫 사람이 방장)
+            tx.set(ref, {
+              name: '운동 인증 챌린지', durationDays: 30, startDate: today(),
+              penalty: 5000, reward: '주간 1등에게 나머지가 커피 쏘기 ☕', deadline: '23:00',
+              participants: makeParticipant({}, self.uid, name)
+            });
+          } else {
+            var p = doc.data().participants || {};
+            if (!p[self.uid]) { tx.update(ref, { participants: makeParticipant(p, self.uid, name) }); }
+            else if (p[self.uid].name !== name) { p[self.uid].name = name; tx.update(ref, { participants: p }); }
+          }
+        });
+      }).then(function () { self._attach(); });
+    },
+
+    _attach: function () {
+      var self = this;
+      this._detach();
+      var ref = self.db.collection('challenges').doc(self.room);
+      this.unsub.push(ref.onSnapshot(function (doc) { self.challengeData = doc.data(); self._emit(); }));
+      this.unsub.push(ref.collection('verifications').orderBy('createdAt', 'desc').limit(200)
+        .onSnapshot(function (snap) {
+          self.verifs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+          self._emit();
+        }));
+    },
+    _detach: function () { this.unsub.forEach(function (u) { u(); }); this.unsub = []; },
+
+    saveChallenge: function (patch) {
+      // participants 는 클라이언트가 직접 수정하지 않음(각자 방코드로 참여)
+      var clean = {};
+      ['name', 'durationDays', 'startDate', 'penalty', 'reward', 'deadline'].forEach(function (k) {
+        if (patch[k] !== undefined) clean[k] = patch[k];
+      });
+      return this.db.collection('challenges').doc(this.room).update(clean);
+    },
+    saveVerification: function (payload) {
+      var self = this;
+      var col = self.db.collection('challenges').doc(self.room).collection('verifications');
+      var name = self.session.name;
+      var uploadPhoto = payload.photo ? dataUrlToStorage(self.storage, self.room, self.uid, payload.photo) : Promise.resolve(null);
+      return uploadPhoto.then(function (url) {
+        // 오늘 내 인증이 있으면 수정, 없으면 생성
+        return col.where('uid', '==', self.uid).where('date', '==', today()).limit(1).get().then(function (qs) {
+          var data = {
+            uid: self.uid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
+            createdAtMs: Date.now(), type: payload.type, duration: payload.duration, message: payload.message || '', photoUrl: url || null
+          };
+          if (!qs.empty) {
+            var docRef = qs.docs[0].ref, prev = qs.docs[0].data();
+            if (!url && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 유지
+            data.cheers = prev.cheers || {};
+            return docRef.set(data);
+          }
+          data.cheers = {};
+          return col.add(data);
+        });
+      });
+    },
+    toggleCheer: function (id) {
+      var self = this;
+      var ref = self.db.collection('challenges').doc(self.room).collection('verifications').doc(id);
+      var v = self.verifs.find(function (x) { return x.id === id; });
+      var mine = v && v.cheers && v.cheers[self.uid];
+      var patch = {};
+      patch['cheers.' + self.uid] = mine ? self.fb.firestore.FieldValue.delete() : true;
+      return ref.update(patch);
+    },
+    reset: function () { return Promise.resolve(); }, // 실서비스에선 초기화 없음
+    inviteInfo: function () {
+      var base = location.origin + location.pathname;
+      return { room: this.room, url: base + '?room=' + encodeURIComponent(this.room) };
+    },
+
+    _emit: function () {
+      if (!this.challengeData) return;
+      var self = this;
+      var pmap = this.challengeData.participants || {};
+      // joinedAt 순으로 정렬해 색상 안정적으로 배정
+      var ids = Object.keys(pmap).sort(function (a, b) { return (pmap[a].joinedAt || 0) - (pmap[b].joinedAt || 0); });
+      // 나를 항상 첫 번째(초록)로
+      ids = [self.uid].concat(ids.filter(function (x) { return x !== self.uid; }));
+      var people = buildPeople(ids, function (uid) { return (pmap[uid] && pmap[uid].name) || '친구'; });
+      var challenge = Object.assign({}, this.challengeData, { participants: ids });
+      var verifs = this.verifs.map(function (v) {
+        var cheers = v.cheers || {};
+        return {
+          id: v.id, userId: v.uid, date: v.date,
+          createdAt: v.createdAtMs ? new Date(v.createdAtMs).toISOString() : new Date().toISOString(),
+          type: v.type, duration: v.duration, message: v.message, photo: v.photoUrl || null,
+          cheers: Object.keys(cheers).length, cheeredByMe: !!cheers[self.uid]
+        };
+      });
+      emit({
+        mode: 'firebase', me: people[self.uid], challenge: challenge, people: people,
+        verifications: verifs, history: []
+      });
+    }
+  };
+
+  function makeParticipant(p, uid, name) {
+    var next = Object.assign({}, p);
+    next[uid] = { name: name, joinedAt: Date.now() };
+    return next;
+  }
+
+  /* dataURL → Firebase Storage 업로드 → downloadURL */
+  function dataUrlToStorage(storage, room, uid, dataUrl) {
+    return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+      var path = 'challenges/' + room + '/' + uid + '/' + Date.now() + '.jpg';
+      var ref = storage.ref().child(path);
+      return ref.put(blob).then(function () { return ref.getDownloadURL(); });
+    });
+  }
+
+  /* Firebase compat SDK 동적 로드 (설정이 있을 때만) */
+  function loadFirebaseSdk() {
+    if (window.firebase && window.firebase.firestore) return Promise.resolve();
+    var V = '10.12.2';
+    var base = 'https://www.gstatic.com/firebasejs/' + V + '/';
+    var files = ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js', 'firebase-storage-compat.js'];
+    return files.reduce(function (chain, f) {
+      return chain.then(function () {
+        return new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = base + f; s.onload = resolve; s.onerror = function () { reject(new Error('Firebase SDK 로드 실패: ' + f)); };
+          document.head.appendChild(s);
+        });
+      });
+    }, Promise.resolve());
+  }
+
+  /* ---------- 모드 판별 & 공개 DB 객체 ---------- */
+  function firebaseConfigured() {
+    var c = window.FIREBASE_CONFIG;
+    return !!(c && c.apiKey && c.projectId && c.apiKey.indexOf('여기에') < 0);
+  }
+  var impl = firebaseConfigured() ? FirebaseStore : LocalStore;
+
+  window.DB = {
+    mode: impl.mode,
+    EXERCISE_TYPES: EXERCISE_TYPES,
+    ymd: ymd, today: today, addDays: addDays,
+    init: function () { return impl.init(); },
+    needsLogin: function () { return impl.needsLogin(); },
+    login: function (o) { return impl.login(o); },
+    logout: function () { return impl.logout(); },
+    onData: onData,
+    saveChallenge: function (p) { return impl.saveChallenge(p); },
+    saveVerification: function (p) { return impl.saveVerification(p); },
+    toggleCheer: function (id) { return impl.toggleCheer(id); },
+    reset: function () { return impl.reset(); },
+    inviteInfo: function () { return impl.inviteInfo(); },
+    _impl: impl
+  };
+})();
