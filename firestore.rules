@@ -1,25 +1,45 @@
 rules_version = '2';
-// Firebase 콘솔 → Firestore Database → 규칙(Rules) 에 붙여넣기
+// Firebase 콘솔 → Firestore Database → 규칙(Rules) 에 붙여넣고 "게시"
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 챌린지(방) 문서: 로그인(익명 포함)한 사용자는 읽고, 참여/수정 가능
-    match /challenges/{room} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-      // 참여자 추가/설정 변경 허용(간단 버전). 더 엄격히 하려면 참여자만 쓰기로 제한 가능.
-      allow update: if request.auth != null;
 
-      // 인증 기록: 로그인 시 읽기, 본인 것만 생성/수정/삭제
+    // 로그인 사용자가 관리자인지: admins/{uid} 문서 존재 여부로 판정
+    function isAdmin() {
+      return request.auth != null
+             && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // 관리자 비밀번호는 config/admin 문서(code 필드)에 저장 — 콘솔에서만 관리, 클라이언트는 못 읽음
+    match /config/{doc} {
+      allow read, write: if false;
+    }
+
+    // 관리자 명단. 관리자 페이지에서 "비밀번호"를 맞히면 스스로 등록됨(uid 수동 등록 불필요)
+    match /admins/{uid} {
+      allow get:    if request.auth != null && request.auth.uid == uid; // 본인 것만 확인
+      allow list:   if false;
+      // 비밀번호가 config/admin.code 와 일치할 때만 등록 허용
+      allow create, update: if request.auth != null && request.auth.uid == uid
+                    && request.resource.data.code == get(/databases/$(database)/documents/config/admin).data.code;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // 챌린지(방)
+    match /challenges/{room} {
+      allow get:    if request.auth != null;   // 방 코드를 아는 사람은 입장
+      allow list:   if isAdmin();              // 전체 방 목록 조회는 관리자만
+      allow create: if request.auth != null;   // 새 방 생성
+      allow update: if request.auth != null;   // 참여/설정 변경
+      allow delete: if isAdmin();              // 방 삭제는 관리자만
+
+      // 인증 기록. 신원(uid 필드)은 "닉네임 기반 키"라 서버(규칙)에서 auth.uid 와 대조 불가.
+      // → 방 코드를 아는(=로그인한) 참여자면 인증 생성/수정 허용. 삭제는 관리자만.
+      // (친구용 앱: 익명 인증 특성상 방 코드가 실질적 접근 통제 역할)
       match /verifications/{vid} {
-        allow read: if request.auth != null;
-        allow create: if request.auth != null
-                      && request.resource.data.uid == request.auth.uid;
-        // 본인 문서 수정(사진/내용) + 남의 문서엔 cheers(응원)만 변경 허용
-        allow update: if request.auth != null && (
-                        resource.data.uid == request.auth.uid
-                        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cheers'])
-                      );
-        allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+        allow get, list: if request.auth != null;
+        allow create: if request.auth != null;
+        allow update: if request.auth != null; // 본인 인증 수정 + 응원(cheers) 포함
+        allow delete: if isAdmin();
       }
     }
   }

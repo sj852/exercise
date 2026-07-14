@@ -1,0 +1,17 @@
+# Cloudflare Worker 설정 (식단 칼로리 분석 — Workers AI)
+name = "calorie"
+main = "calorie-worker.js"
+compatibility_date = "2024-11-01"
+
+# Workers AI 바인딩 (무료 티어). 이게 있어야 env.AI.run 이 동작합니다.
+[ai]
+binding = "AI"
+
+[vars]
+# 특정 사이트만 허용하려면 GitHub Pages 주소로 바꾸세요 (기본 "*" 는 아무나 호출 가능):
+ALLOW_ORIGIN = "*"
+# 사용할 비전 모델. 필요시 다른 Workers AI 비전 모델로 교체 가능:
+AI_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+
+# 참고: Google Gemini 를 더 이상 쓰지 않으므로 GEMINI_API_KEY 비밀값은 없어도 됩니다.
+#       (남아 있어도 무해합니다. 지우려면: npx wrangler secret delete GEMINI_API_KEY)

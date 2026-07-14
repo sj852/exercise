@@ -7,6 +7,7 @@
 
   var today = DB.today, addDays = DB.addDays;
   var EXERCISE_TYPES = DB.EXERCISE_TYPES;
+  var MEAL_SLOTS = DB.MEAL_SLOTS, slotLabel = DB.slotLabel;
   var DEMO_FRIENDS = [{ id: 'minji', name: '민지' }, { id: 'taeho', name: '태호' }];
 
   var state = null;                 // 최신 스냅샷
@@ -21,9 +22,14 @@
   function person(uid) { return state.people[uid] || { name: '친구', avatar: '?', color: 'var(--ink-mute)' }; }
   function personColor(uid) { return person(uid).color; }
 
-  /* ---------- 파생 계산 ---------- */
-  function verifsByUser(uid) { return state.verifications.filter(function (v) { return v.userId === uid; }); }
-  function didVerify(uid, date) { return state.verifications.some(function (v) { return v.userId === uid && v.date === date; }); }
+  /* ---------- 파생 계산 (운동/식단 분리) ---------- */
+  function isWorkout(v) { return (v.category || 'workout') === 'workout'; }
+  function isMeal(v) { return v.category === 'meal'; }
+  function workoutVerifs() { return state.verifications.filter(isWorkout); }
+  function mealVerifs() { return state.verifications.filter(isMeal); }
+  // 운동 기준 통계 (streak·캘린더·랭킹성 계산은 전부 운동 인증만 본다)
+  function verifsByUser(uid) { return workoutVerifs().filter(function (v) { return v.userId === uid; }); }
+  function didVerify(uid, date) { return workoutVerifs().some(function (v) { return v.userId === uid && v.date === date; }); }
   function streak(uid) {
     var cur = didVerify(uid, today()) ? today() : addDays(today(), -1);
     if (!didVerify(uid, cur)) return 0;
@@ -65,6 +71,7 @@
 
   /* ---------- 네비게이션 / 렌더 ---------- */
   function navTo(name) {
+    if (name === 'meals') { mealState.date = today(); mealState.uid = null; }  // 식단 탭은 항상 오늘·나부터
     currentScreen = name; render();
     document.querySelectorAll('.nav-item').forEach(function (b) { b.classList.toggle('active', b.dataset.screen === name); });
     view.scrollTop = 0;
@@ -105,7 +112,8 @@
           ? h('div', { class: 'gate-hint' }, ['같은 방 코드를 입력한 친구끼리 인증을 공유해요. 처음 쓰는 코드면 새 챌린지가 만들어져요.'])
           : h('div', { class: 'gate-hint' }, ['지금은 체험(데모) 모드예요. 친구와 실시간 공유하려면 README의 Firebase 연동을 켜세요.'])
       ]),
-      installButton()
+      installButton(),
+      h('a', { href: 'admin.html', style: 'display:block;margin-top:18px;font-size:12px;color:var(--ink-mute);text-decoration:underline;' }, ['🛠 관리자 콘솔'])
     ]));
   }
   function showApp() {
@@ -140,23 +148,12 @@
       h('div', { class: 'participants' }, chips)
     ]);
 
-    var recent = state.verifications.slice().sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }).slice(0, 15);
-    var feedCards = recent.map(function (v) {
-      return h('div', { class: 'feed-card' }, [
-        v.photo ? h('div', { class: 'feed-photo' }, [h('img', { src: v.photo, alt: '인증샷' })])
-                : h('div', { class: 'feed-photo', style: 'background:' + hatch(v.userId) + ';color:' + personColor(v.userId) }, ['운동 인증샷']),
-        h('div', { class: 'feed-body' }, [
-          h('div', { class: 'fb-head' }, [h('div', { class: 'fb-who' }, [person(v.userId).name + ' · ' + v.type + ' ' + v.duration + '분']), h('div', { class: 'fb-time' }, [relTime(v.createdAt)])]),
-          v.message ? h('div', { class: 'fb-msg' }, [v.message]) : null,
-          h('button', { class: 'cheer-btn' + (v.cheeredByMe ? ' cheered' : ''), onclick: function () { DB.toggleCheer(v.id); } }, ['👏 응원하기 ' + v.cheers])
-        ])
-      ]);
-    });
+    var recent = workoutVerifs().slice().sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }).slice(0, 15);
 
     return h('div', { class: 'screen' }, [
       header, reminder, challengeCard,
-      h('div', { class: 'section-label' }, ['친구들 인증 피드']),
-      recent.length ? h('div', { class: 'feed' }, feedCards) : h('div', { class: 'empty' }, ['아직 인증이 없어요. 첫 인증을 남겨보세요! 📸'])
+      h('div', { class: 'section-label' }, ['친구들 운동 인증 피드']),
+      recent.length ? h('div', { class: 'feed' }, recent.map(feedCard)) : h('div', { class: 'empty' }, ['아직 운동 인증이 없어요. 첫 인증을 남겨보세요! 📸'])
     ]);
   };
   function hatch(uid) {
@@ -164,40 +161,160 @@
     return 'repeating-linear-gradient(45deg, oklch(88% 0.05 ' + hue + '), oklch(88% 0.05 ' + hue + ') 10px, oklch(92% 0.04 ' + hue + ') 10px, oklch(92% 0.04 ' + hue + ') 20px)';
   }
 
+  /* 피드 카드 (운동/식단 공용). 본인 인증엔 수정 버튼 노출 */
+  function feedCard(v) {
+    var meal = isMeal(v);
+    var title = meal
+      ? person(v.userId).name + ' · ' + slotLabel(v.slot)
+      : person(v.userId).name + ' · ' + (v.type || '운동') + (v.duration != null ? ' ' + v.duration + '분' : '');
+    var placeholder = meal ? '식단 인증샷' : '운동 인증샷';
+    return h('div', { class: 'feed-card' }, [
+      v.photo ? h('div', { class: 'feed-photo' }, [h('img', { src: v.photo, alt: '인증샷' })])
+              : h('div', { class: 'feed-photo', style: 'background:' + hatch(v.userId) + ';color:' + personColor(v.userId) }, [placeholder]),
+      h('div', { class: 'feed-body' }, [
+        h('div', { class: 'fb-head' }, [h('div', { class: 'fb-who' }, [title]), h('div', { class: 'fb-time' }, [relTime(v.createdAt)])]),
+        meal && v.kcal != null ? h('div', { class: 'kcal-badge' }, ['🍽 약 ' + v.kcal + ' kcal' + (v.foods && v.foods.length ? ' · ' + v.foods.map(function (f) { return f.name; }).join(', ') : '')]) : null,
+        v.message ? h('div', { class: 'fb-msg' }, [v.message]) : null,
+        h('div', { class: 'fb-actions' }, [
+          h('button', { class: 'cheer-btn' + (v.cheeredByMe ? ' cheered' : ''), onclick: function () { DB.toggleCheer(v.id); } }, ['👏 응원 ' + v.cheers]),
+          v.userId === ME() ? h('button', { class: 'edit-btn', onclick: function () { editVerification(v); } }, ['✏️ 수정']) : null
+        ])
+      ])
+    ]);
+  }
+  // 기존 인증을 수정: 값을 draft 로 불러와 인증 화면으로 이동 (같은 끼니/운동은 덮어쓰기됨)
+  function editVerification(v) {
+    draft = freshDraft();
+    draft.category = isMeal(v) ? 'meal' : 'workout';
+    draft.photo = v.photo || null;
+    draft.message = v.message || '';
+    if (draft.category === 'meal') { draft.slot = v.slot || 'lunch'; draft.kcal = v.kcal != null ? v.kcal : null; draft.foods = v.foods || null; }
+    else { draft.type = v.type || null; draft.duration = v.duration || 30; }
+    navTo('verify');
+    toast('수정 후 다시 인증하면 갱신돼요');
+  }
+
   /* =====================================================================
      화면 2 · 인증 업로드
      ===================================================================== */
-  var draft = { photo: null, type: null, duration: 30, message: '' };
+  function freshDraft() { return { category: 'workout', slot: 'lunch', photo: null, type: null, duration: 30, message: '', kcal: null, foods: null, analyzing: false }; }
+  var draft = freshDraft();
   screens.verify = function () {
-    var uploaderInner = draft.photo ? [h('img', { src: draft.photo, alt: '미리보기' })] : [h('div', { class: 'u-icon' }, ['📷']), h('div', { class: 'u-text' }, ['사진 찍어서 인증하기'])];
+    var meal = draft.category === 'meal';
+    var uploaderInner = draft.photo ? [h('img', { src: draft.photo, alt: '미리보기' })]
+      : [h('div', { class: 'u-icon' }, [meal ? '🍽' : '📷']), h('div', { class: 'u-text' }, [meal ? '식단 사진 올리기' : '사진 찍어서 인증하기'])];
     var fileInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none', id: 'photoInput' });
-    fileInput.addEventListener('change', function (e) { var f = e.target.files[0]; if (f) downscaleImage(f, function (u) { draft.photo = u; render(); }); });
+    // 사진이 바뀌면 이전 칼로리 분석 결과는 무효화
+    fileInput.addEventListener('change', function (e) { var f = e.target.files[0]; if (f) downscaleImage(f, function (u) { draft.photo = u; draft.kcal = null; draft.foods = null; render(); }); });
 
-    var chips = EXERCISE_TYPES.map(function (t) { return h('button', { class: 'chip' + (draft.type === t ? ' active' : ''), onclick: function () { draft.type = draft.type === t ? null : t; render(); } }, [t]); });
-    var msgArea = h('textarea', { class: 'msg-input', placeholder: '오늘 운동 어땠나요?' }, []);
+    // 운동/식단 전환 토글
+    var catToggle = h('div', { class: 'cat-toggle' }, [
+      h('button', { class: 'cat-btn' + (!meal ? ' active' : ''), onclick: function () { if (draft.category !== 'workout') { draft.category = 'workout'; render(); } } }, ['🏋️ 운동']),
+      h('button', { class: 'cat-btn' + (meal ? ' active' : ''), onclick: function () { if (draft.category !== 'meal') { draft.category = 'meal'; if (!draft.slot) draft.slot = 'lunch'; render(); } } }, ['🍽️ 식단'])
+    ]);
+
+    var msgArea = h('textarea', { class: 'msg-input', placeholder: meal ? '식단 메모 (선택)' : '오늘 운동 어땠나요?' }, []);
     msgArea.value = draft.message; msgArea.addEventListener('input', function () { draft.message = msgArea.value; });
 
+    var body;
+    if (meal) {
+      var slotChips = MEAL_SLOTS.map(function (s) { return h('button', { class: 'chip' + (draft.slot === s.key ? ' active' : ''), onclick: function () { draft.slot = s.key; render(); } }, [s.label]); });
+      body = [
+        h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['끼니']), h('div', { class: 'chips' }, slotChips)]),
+        h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['칼로리']), caloriePanel()])
+      ];
+    } else {
+      var chips = EXERCISE_TYPES.map(function (t) { return h('button', { class: 'chip' + (draft.type === t ? ' active' : ''), onclick: function () { draft.type = draft.type === t ? null : t; render(); } }, [t]); });
+      body = [
+        h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 종류']), h('div', { class: 'chips' }, chips)]),
+        h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 시간']),
+          h('div', { class: 'stepper' }, [
+            h('button', { onclick: function () { draft.duration = Math.max(5, draft.duration - 5); render(); } }, ['–']),
+            h('div', { class: 'step-val' }, [draft.duration + '분']),
+            h('button', { onclick: function () { draft.duration = Math.min(300, draft.duration + 5); render(); } }, ['+'])
+          ])])
+      ];
+    }
+
     return h('div', { class: 'screen' }, [
-      h('div', { class: 'topbar' }, [h('button', { class: 'back', onclick: function () { navTo('home'); } }, ['←']), h('div', { class: 'topbar-title' }, ['오늘 운동 인증하기'])]),
-      h('label', { class: 'uploader', for: 'photoInput', style: 'margin-top:10px' }, uploaderInner), fileInput,
-      h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 종류']), h('div', { class: 'chips' }, chips)]),
-      h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 시간']),
-        h('div', { class: 'stepper' }, [
-          h('button', { onclick: function () { draft.duration = Math.max(5, draft.duration - 5); render(); } }, ['–']),
-          h('div', { class: 'step-val' }, [draft.duration + '분']),
-          h('button', { onclick: function () { draft.duration = Math.min(300, draft.duration + 5); render(); } }, ['+'])
-        ])]),
+      h('div', { class: 'topbar' }, [h('button', { class: 'back', onclick: function () { navTo(meal ? 'meals' : 'home'); } }, ['←']), h('div', { class: 'topbar-title' }, [meal ? '식단 기록하기' : '운동 인증하기'])]),
+      catToggle,
+      h('label', { class: 'uploader', for: 'photoInput', style: 'margin-top:14px' }, uploaderInner), fileInput
+    ].concat(body).concat([
       h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['한마디 남기기']), msgArea]),
-      h('button', { class: 'btn-primary', style: 'margin-top:24px', onclick: submitVerification }, ['인증 완료하기 🔥'])
-    ]);
+      h('button', { class: 'btn-primary', style: 'margin-top:24px', onclick: submitVerification }, [meal ? '식단 기록하기 🍽️' : '인증 완료하기 🔥'])
+    ]));
   };
+
+  /* 식단 칼로리 패널 — AI 분석 + 직접 수정(총 칼로리 입력, 음식 제거) */
+  function caloriePanel() {
+    var configured = !!window.CALORIE_API_URL;
+    var kids = [];
+    if (draft.analyzing) {
+      kids.push(h('div', { class: 'kcal-analyzing' }, ['🍽 분석 중… 잠시만요']));
+    } else {
+      kids.push(h('button', { class: 'analyze-btn' + (configured && draft.photo ? '' : ' disabled'), onclick: analyzeCalories },
+        [draft.kcal != null ? '↻ 사진으로 다시 분석' : '🍽 사진으로 AI 칼로리 분석']));
+    }
+    // 인식된 음식 목록 (각 항목 제거 가능)
+    if (draft.foods && draft.foods.length) {
+      kids.push(h('div', { class: 'kcal-foods' }, draft.foods.map(function (f, i) {
+        return h('div', { class: 'kcal-food' }, [
+          h('span', { class: 'kf-name' }, [f.name]),
+          h('span', { class: 'kf-cal' }, [f.kcal + ' kcal']),
+          h('button', { class: 'kf-x', title: '제거', onclick: function () { removeFood(i); } }, ['✕'])
+        ]);
+      })));
+    }
+    // 총 칼로리 직접 입력/수정
+    var totalInput = h('input', { type: 'number', class: 'kcal-input', min: '0', inputmode: 'numeric', placeholder: '예: 650', value: draft.kcal != null ? String(draft.kcal) : '' });
+    totalInput.addEventListener('input', function () { var val = totalInput.value.trim(); draft.kcal = val === '' ? null : Math.max(0, Math.round(+val) || 0); });
+    kids.push(h('div', { class: 'kcal-total-edit' }, [
+      h('div', { class: 'kcal-input-row' }, [h('span', { class: 'kie-label' }, ['총 칼로리']), totalInput, h('span', { class: 'kie-unit' }, ['kcal'])]),
+      h('div', { class: 'kcal-hint' }, [configured
+        ? 'AI 추정치는 오차가 있어요. 숫자를 직접 고치거나 음식을 지울 수 있어요.'
+        : '분석 서버 미설정 — 칼로리를 직접 입력하세요. (설정법은 README 참고)'])
+    ]));
+    return h('div', {}, kids);
+  }
+  function removeFood(i) {
+    if (!draft.foods) return;
+    var f = draft.foods[i];
+    draft.foods = draft.foods.filter(function (_, j) { return j !== i; });
+    if (f && draft.kcal != null) draft.kcal = Math.max(0, draft.kcal - (f.kcal || 0));
+    render();
+  }
+  function analyzeCalories() {
+    if (draft.analyzing) return;
+    if (!window.CALORIE_API_URL) { toast('분석 서버가 설정되지 않았어요'); return; }
+    if (!draft.photo) { toast('먼저 식단 사진을 올려주세요'); return; }
+    draft.analyzing = true; render();
+    DB.estimateCalories(draft.photo).then(function (res) {
+      draft.analyzing = false;
+      draft.kcal = res.totalKcal;
+      draft.foods = res.foods;
+      if (!res.foods.length && res.note) toast(res.note);
+      render();
+    }).catch(function (e) {
+      draft.analyzing = false; render();
+      console.error(e); toast('칼로리 분석 실패: ' + (e && e.message || ''));
+    });
+  }
   function submitVerification() {
-    if (!draft.type) { toast('운동 종류를 선택해주세요'); return; }
-    var payload = { type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo };
+    var payload, dest;
+    if (draft.category === 'meal') {
+      if (!draft.slot) draft.slot = 'lunch';
+      payload = { category: 'meal', slot: draft.slot, message: draft.message.trim(), photo: draft.photo, kcal: draft.kcal, foods: draft.foods };
+      dest = 'meals';
+    } else {
+      if (!draft.type) { toast('운동 종류를 선택해주세요'); return; }
+      payload = { category: 'workout', type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo };
+      dest = 'home';
+    }
     toast('저장 중...');
     DB.saveVerification(payload).then(function () {
-      draft = { photo: null, type: null, duration: 30, message: '' };
-      navTo('home'); toast('인증 완료! 🎉');
+      draft = freshDraft();
+      navTo(dest); toast(dest === 'meals' ? '식단 기록 완료! 🍽️' : '인증 완료! 🎉');
     }).catch(function (e) { console.error(e); toast('저장 실패: ' + (e && e.message || '')); });
   }
   function downscaleImage(file, cb) {
@@ -248,25 +365,63 @@
   };
 
   /* =====================================================================
-     화면 4 · 랭킹
+     화면 4 · 식단 (하루 보기 · 날짜 이동)
      ===================================================================== */
-  screens.ranking = function () {
-    var ranked = state.challenge.participants.map(function (uid) { return { uid: uid, streak: streak(uid), total: totalCount(uid) }; })
-      .sort(function (a, b) { return (b.streak - a.streak) || (b.total - a.total); });
-    var medals = ['👑', '🥈', '🥉'];
-    var cards = ranked.map(function (r, i) {
-      return h('div', { class: 'rank-card' + (i === 0 ? ' first' : '') }, [
-        h('div', { class: 'rank-medal' }, [medals[i] || '🏅']), avatar(r.uid, 46),
-        h('div', { class: 'rank-info' }, [h('div', { class: 'rank-name' }, [person(r.uid).name]), h('div', { class: 'rank-stat' }, ['연속 ' + r.streak + '일 · 누적 ' + r.total + '회'])]),
-        h('div', { class: 'rank-pos' }, [(i + 1) + '위'])
+  var mealState = { date: today(), uid: null };
+  var WEEK = ['일', '월', '화', '수', '목', '금', '토'];
+  function dateLabel(d) { var dt = new Date(d + 'T00:00:00'); return (dt.getMonth() + 1) + '월 ' + dt.getDate() + '일 (' + WEEK[dt.getDay()] + ')'; }
+  function mealsOn(uid, d) { return mealVerifs().filter(function (v) { return v.userId === uid && v.date === d; }); }
+  function kcalOn(uid, d) { return mealsOn(uid, d).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
+
+  screens.meals = function () {
+    var d = mealState.date, isToday = d === today();
+    // 보고 있는 사람 (참여자 칩을 눌러 전환). 기본은 나.
+    var viewUid = mealState.uid || ME();
+    if (state.challenge.participants.indexOf(viewUid) < 0) viewUid = ME();
+    var mine = viewUid === ME();
+
+    // 날짜 네비 (미래로는 이동 불가)
+    var nav = h('div', { class: 'day-nav' }, [
+      h('button', { class: 'day-arrow', onclick: function () { mealState.date = addDays(d, -1); render(); } }, ['‹']),
+      h('div', { class: 'day-label' }, [isToday ? '오늘 · ' + dateLabel(d) : dateLabel(d)]),
+      h('button', { class: 'day-arrow' + (isToday ? ' disabled' : ''), onclick: function () { if (!isToday) { mealState.date = addDays(d, 1); render(); } } }, ['›'])
+    ]);
+
+    // 참여자별 그날 총 칼로리 — 탭하면 그 사람 하루 보기로 전환
+    var totals = h('div', { class: 'participants', style: 'margin-top:4px' }, state.challenge.participants.map(function (uid) {
+      return h('div', { class: 'p-chip sel' + (uid === viewUid ? ' active' : ''), onclick: function () { mealState.uid = uid; render(); } },
+        [avatar(uid, 30), h('div', { class: 'p-name' }, [person(uid).name]), h('div', { class: 'kcal-sum' }, [kcalOn(uid, d).toLocaleString() + ' kcal'])]);
+    }));
+
+    // 선택한 사람의 끼니별 기록 (수정/추가는 본인 + 오늘일 때만)
+    var canEdit = mine && isToday;
+    var meals = mealsOn(viewUid, d);
+    var dayTotal = kcalOn(viewUid, d);
+    var slotRows = MEAL_SLOTS.map(function (s) {
+      var entry = meals.find(function (v) { return (v.slot || 'lunch') === s.key; });
+      if (entry) {
+        return h('div', { class: 'meal-slot filled' }, [
+          entry.photo ? h('img', { class: 'ms-photo', src: entry.photo, alt: '' }) : h('div', { class: 'ms-emoji' }, ['🍽']),
+          h('div', { class: 'ms-body' }, [
+            h('div', { class: 'ms-top' }, [h('span', { class: 'ms-slot' }, [s.label]), h('span', { class: 'ms-cal' }, [entry.kcal != null ? entry.kcal.toLocaleString() + ' kcal' : '-'])]),
+            h('div', { class: 'ms-foods' }, [entry.foods && entry.foods.length ? entry.foods.map(function (f) { return f.name; }).join(', ') : (entry.message || '기록됨')])
+          ]),
+          canEdit ? h('button', { class: 'ms-edit', title: '수정', onclick: function () { editVerification(entry); } }, ['✏️']) : null
+        ]);
+      }
+      return h('div', { class: 'meal-slot empty' }, [
+        h('div', { class: 'ms-emoji faded' }, ['🍽']),
+        h('div', { class: 'ms-body' }, [h('div', { class: 'ms-top' }, [h('span', { class: 'ms-slot' }, [s.label]), h('span', { class: 'ms-none' }, ['기록 없음'])])]),
+        canEdit ? h('button', { class: 'ms-add', onclick: function () { draft = freshDraft(); draft.category = 'meal'; draft.slot = s.key; navTo('verify'); } }, ['+ 기록']) : null
       ]);
     });
-    var last = ranked[ranked.length - 1];
+
     return h('div', { class: 'screen' }, [
-      h('div', { style: 'padding:8px 0 4px' }, [h('div', { class: 'h-title' }, ['이번 주 랭킹 🏆']), h('div', { class: 'h-sub' }, ['1등은 이번주 커피 안 사도 돼요'])]),
-      h('div', { style: 'display:flex;flex-direction:column;gap:12px;margin-top:16px' }, cards.concat([
-        last ? h('div', { class: 'penalty-note' }, [h('div', { style: 'font-size:16px' }, ['💸']), h('div', {}, ['이번 주 꼴찌는 벌금 ' + (state.challenge.penalty || 0).toLocaleString() + '원! ' + person(last.uid).name + ' 조심해요 😬'])]) : null
-      ]))
+      h('div', { style: 'padding:8px 0 4px' }, [h('div', { class: 'h-title' }, ['식단 기록 🍽️'])]),
+      nav,
+      totals,
+      h('div', { class: 'meal-daytotal' }, [(mine ? '내' : person(viewUid).name) + ' 섭취 ', h('b', {}, [dayTotal.toLocaleString()]), ' kcal']),
+      h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' }, slotRows)
     ]);
   };
 
@@ -358,14 +513,83 @@
         h('button', { class: 'chip', style: 'padding:6px 12px', onclick: function () { navTo('setup'); } }, ['⚙️ 설정'])
       ]),
       historyItems.length ? h('div', {}, historyItems) : h('div', { class: 'empty', style: 'padding:14px' }, ['지난 챌린지 기록이 여기에 쌓여요']),
+      state.isAdmin ? h('button', { class: 'admin-open', style: 'margin-top:14px', onclick: function () { adminState = { view: 'list', rooms: null, detail: null }; navTo('admin'); } }, ['🛠 관리자 콘솔 열기']) : null,
       installButton(),
       state.mode === 'local' ? h('button', { class: 'reset-link', onclick: resetData }, ['데이터 초기화 (데모 다시 채우기)']) : null,
       h('button', { class: 'reset-link', onclick: function () { DB.logout().then(function () { location.reload(); }); } }, ['로그아웃'])
     ]);
   };
+
+  /* =====================================================================
+     관리자 콘솔 (전체 방 관리) — 관리자만 접근
+     ===================================================================== */
+  var adminState = { view: 'list', rooms: null, detail: null };
+  screens.admin = function () {
+    if (adminState.view === 'detail') return adminDetailScreen();
+    if (!adminState.rooms) {
+      DB.adminListRooms().then(function (rooms) { adminState.rooms = rooms; if (currentScreen === 'admin') render(); })
+        .catch(function (e) { console.error(e); toast('방 목록 로드 실패: ' + (e && e.message || '')); });
+    }
+    var rows = (adminState.rooms || []).map(function (r) {
+      return h('div', { class: 'admin-room', onclick: function () { adminState.view = 'detail'; adminState.detail = { code: r.code, data: null }; render(); loadDetail(r.code); } }, [
+        h('div', { style: 'flex:1;min-width:0' }, [
+          h('div', { class: 'ar-name' }, [r.name || '(이름 없음)']),
+          h('div', { class: 'ar-code' }, ['코드: ' + r.code + ' · 참여 ' + r.participants + '명 · 시작 ' + (r.startDate || '-')])
+        ]),
+        h('div', { class: 'ar-arrow' }, ['›'])
+      ]);
+    });
+    return h('div', { class: 'screen' }, [
+      h('div', { class: 'topbar' }, [h('button', { class: 'back', onclick: function () { navTo('profile'); } }, ['←']), h('div', { class: 'topbar-title' }, ['🛠 관리자 콘솔'])]),
+      h('div', { class: 'h-sub', style: 'padding:2px 0 12px' }, ['전체 방(챌린지) · ' + (adminState.rooms ? adminState.rooms.length + '개' : '불러오는 중…')]),
+      adminState.rooms
+        ? (rows.length ? h('div', { style: 'display:flex;flex-direction:column;gap:10px' }, rows) : h('div', { class: 'empty' }, ['방이 없습니다']))
+        : h('div', { class: 'empty' }, ['불러오는 중…']),
+      h('button', { class: 'chip', style: 'margin-top:16px;padding:8px 14px', onclick: function () { adminState.rooms = null; render(); } }, ['↻ 새로고침'])
+    ]);
+  };
+  function loadDetail(code) {
+    DB.adminRoomDetail(code).then(function (d) { if (adminState.detail && adminState.detail.code === code) { adminState.detail.data = d; if (currentScreen === 'admin') render(); } })
+      .catch(function (e) { console.error(e); toast('상세 로드 실패: ' + (e && e.message || '')); });
+  }
+  function adminDetailScreen() {
+    var det = adminState.detail, d = det.data, body;
+    if (!d) body = h('div', { class: 'empty' }, ['불러오는 중…']);
+    else {
+      var partRows = d.participants.map(function (p) {
+        return h('div', { class: 'friend-row' }, [
+          h('div', { class: 'fr-name' }, [p.name + ' · ' + p.count + '회']),
+          h('button', { class: 'fr-remove', title: '제외', onclick: function () {
+            if (confirm('"' + p.name + '" 님을 이 방에서 제외할까요?')) DB.adminRemoveParticipant(det.code, p.uid).then(function () { loadDetail(det.code); toast('제외됨'); });
+          } }, ['🗑'])
+        ]);
+      });
+      body = h('div', {}, [
+        h('div', { class: 'card', style: 'padding:16px;margin-bottom:14px' }, [
+          h('div', { class: 'ar-name' }, [d.challenge.name || '(이름 없음)']),
+          h('div', { class: 'ar-code', style: 'margin-top:4px' }, ['코드 ' + det.code + ' · 시작 ' + (d.challenge.startDate || '-')]),
+          h('div', { class: 'ar-code' }, ['참여 ' + d.participants.length + '명 · 인증 ' + d.verifCount + '건 · 벌금 ' + (d.challenge.penalty || 0).toLocaleString() + '원'])
+        ]),
+        h('div', { class: 'field-label' }, ['참여자']),
+        d.participants.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, partRows) : h('div', { class: 'empty', style: 'padding:12px' }, ['참여자 없음']),
+        h('div', { style: 'margin-top:22px;display:flex;flex-direction:column;gap:10px' }, [
+          h('button', { class: 'admin-danger', onclick: function () {
+            if (confirm('이 방의 인증 기록을 전부 삭제할까요? (참여자·설정은 유지)')) DB.adminResetVerifs(det.code).then(function () { loadDetail(det.code); toast('인증 기록 초기화됨'); });
+          } }, ['인증 기록 전체 삭제']),
+          h('button', { class: 'admin-danger strong', onclick: function () {
+            if (confirm('⚠️ 방("' + det.code + '")을 완전히 삭제합니다. 되돌릴 수 없어요. 진행할까요?')) DB.adminDeleteRoom(det.code).then(function () { adminState.view = 'list'; adminState.rooms = null; render(); toast('방 삭제됨'); });
+          } }, ['방 완전 삭제'])
+        ])
+      ]);
+    }
+    return h('div', { class: 'screen' }, [
+      h('div', { class: 'topbar' }, [h('button', { class: 'back', onclick: function () { adminState.view = 'list'; adminState.detail = null; render(); } }, ['←']), h('div', { class: 'topbar-title' }, ['방 관리'])]),
+      body
+    ]);
+  }
   function statTile(num, cap, color) { return h('div', { class: 'stat-tile' }, [h('div', { class: 'stat-num', style: 'color:' + color }, [num]), h('div', { class: 'stat-cap' }, [cap])]); }
   function countMyPenalties() { var cur = state.challenge.startDate, cnt = 0; while (cur < today()) { if (!didVerify(ME(), cur)) cnt++; cur = addDays(cur, 1); } return cnt; }
-  function resetData() { if (!confirm('모든 기록을 지우고 데모 데이터로 초기화할까요?')) return; DB.reset(); draft = { photo: null, type: null, duration: 30, message: '' }; calMonth = new Date(); navTo('home'); toast('초기화 완료'); }
+  function resetData() { if (!confirm('모든 기록을 지우고 데모 데이터로 초기화할까요?')) return; DB.reset(); draft = freshDraft(); calMonth = new Date(); navTo('home'); toast('초기화 완료'); }
 
   /* ---------- PWA 설치 버튼 ---------- */
   function installButton() {

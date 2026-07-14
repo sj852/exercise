@@ -34,6 +34,14 @@
     'oklch(75% 0.13 330)'  // 핑크
   ];
   var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산', '줄넘기'];
+  // 식단 끼니 구분
+  var MEAL_SLOTS = [
+    { key: 'breakfast', label: '아침' },
+    { key: 'lunch', label: '점심' },
+    { key: 'dinner', label: '저녁' },
+    { key: 'snack', label: '간식' }
+  ];
+  function slotLabel(key) { for (var i = 0; i < MEAL_SLOTS.length; i++) if (MEAL_SLOTS[i].key === key) return MEAL_SLOTS[i].label; return '식사'; }
 
   /* ---------- 날짜 유틸 ---------- */
   function ymd(d) {
@@ -98,7 +106,16 @@
       this._save(); this._emit(); return Promise.resolve();
     },
     saveVerification: function (payload) {
-      var existing = this.raw.verifications.find(function (v) { return v.userId === 'me' && v.date === today(); });
+      var cat = payload.category || 'workout';
+      var slot = payload.slot || null;
+      // 운동은 (나,오늘) 1건, 식단은 (나,오늘,끼니) 1건으로 중복 없이 갱신
+      var existing = this.raw.verifications.find(function (v) {
+        if (v.userId !== 'me' || v.date !== today()) return false;
+        var vcat = v.category || (v.type === '식단' ? 'meal' : 'workout');
+        if (vcat !== cat) return false;
+        if (cat === 'meal') return (v.slot || null) === slot;
+        return true;
+      });
       if (existing) { Object.assign(existing, payload); existing.createdAt = new Date().toISOString(); }
       else {
         var maxId = this.raw.verifications.reduce(function (m, v) { return Math.max(m, v.id); }, 0);
@@ -126,10 +143,32 @@
         challenge: raw.challenge,
         people: people,
         verifications: raw.verifications.map(function (v) {
-          return Object.assign({}, v, { cheeredByMe: !!raw.cheeredByMe[v.id] });
+          var cat = v.category || (v.type === '식단' ? 'meal' : 'workout');
+          return Object.assign({}, v, { category: cat, slot: v.slot || null, cheeredByMe: !!raw.cheeredByMe[v.id] });
         }),
-        history: raw.history
+        history: raw.history,
+        isAdmin: true   // 데모에선 본인이 방장이므로 관리자 UI 미리보기 허용
       });
+    },
+
+    /* ---------- 관리자 기능 (데모: 단일 방 대상) ---------- */
+    adminAuthenticate: function () { return Promise.resolve(true); }, // 데모는 비번 없이 열람
+    adminListRooms: function () {
+      var raw = this.raw || (this.raw = this._seed());
+      return Promise.resolve([{ code: '(데모방)', name: raw.challenge.name, participants: raw.challenge.participants.length, startDate: raw.challenge.startDate, penalty: raw.challenge.penalty }]);
+    },
+    adminRoomDetail: function () {
+      var raw = this.raw;
+      var participants = raw.challenge.participants.map(function (uid) {
+        return { uid: uid, name: raw.names[uid] || uid, count: raw.verifications.filter(function (v) { return v.userId === uid; }).length };
+      });
+      return Promise.resolve({ code: '(데모방)', challenge: raw.challenge, participants: participants, verifCount: raw.verifications.length });
+    },
+    adminResetVerifs: function () { this.raw.verifications = []; this.raw.cheeredByMe = {}; this._save(); this._emit(); return Promise.resolve(); },
+    adminDeleteRoom: function () { this.raw = this._seed(); this._save(); this._emit(); return Promise.resolve(); },
+    adminRemoveParticipant: function (code, uid) {
+      this.raw.challenge.participants = this.raw.challenge.participants.filter(function (x) { return x !== uid; });
+      this._save(); this._emit(); return Promise.resolve();
     },
 
     _seed: function () {
@@ -156,7 +195,9 @@
           }
         });
       }
-      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 6e5).toISOString(), type: '웨이트', duration: 45, message: '오늘도 하체 부셨습니다 🍗', photo: null, cheers: 2 });
+      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 6e5).toISOString(), category: 'workout', type: '웨이트', duration: 45, message: '오늘도 하체 부셨습니다 🍗', photo: null, cheers: 2 });
+      verifications.push({ id: id++, userId: 'me', date: today(), createdAt: new Date(Date.now() - 3e5).toISOString(), category: 'meal', slot: 'lunch', message: '닭가슴살 도시락', photo: null, kcal: 620, foods: [{ name: '닭가슴살 도시락', kcal: 620 }], cheers: 0 });
+      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 2e5).toISOString(), category: 'meal', slot: 'breakfast', message: '아침 오트밀', photo: null, kcal: 350, foods: [{ name: '오트밀', kcal: 250 }, { name: '바나나', kcal: 100 }], cheers: 1 });
       return {
         names: { me: (this.session && this.session.name) || '나', minji: '민지', taeho: '태호' },
         challenge: {
@@ -177,8 +218,8 @@
      ===================================================================== */
   var FirebaseStore = {
     mode: 'firebase',
-    fb: null, db: null, auth: null, storage: null,
-    uid: null, session: null, room: null,
+    fb: null, db: null, auth: null, storage: null, isAdmin: false,
+    uid: null, pid: null, session: null, room: null,
     challengeData: null, verifs: [], unsub: [],
 
     init: function () {
@@ -231,6 +272,9 @@
     _join: function (name, room) {
       var self = this;
       self.room = room;
+      // 방 안에서의 신원 = 닉네임 기반 안정 키.
+      // → 같은 방 + 같은 닉네임이면 기기/브라우저가 달라도 항상 같은 참여자로 로그인(기록 이어받음).
+      self.pid = keyOf(name);
       self.session = { name: name, room: room };
       localStorage.setItem(SESS_KEY, JSON.stringify(self.session));
       var ref = self.db.collection('challenges').doc(room);
@@ -243,25 +287,30 @@
           var fresh = {
             name: '운동 인증 챌린지', durationDays: 30, startDate: today(),
             penalty: 5000, reward: '주간 1등에게 나머지가 커피 쏘기 ☕', deadline: '23:00',
-            participants: makeParticipant({}, self.uid, name)
+            participants: makeParticipant({}, self.pid, name)
           };
           return ref.set(fresh).then(function () { return fresh; });
         }
-        // 이미 있으면 나만 참여자에 추가/이름 갱신 (dot-path 로 다른 참여자 보존)
         var data = doc.data();
         var p = data.participants || {};
-        var mine = p[self.uid];
-        if (!mine || mine.name !== name) {
-          var joinedAt = (mine && mine.joinedAt) || Date.now();
-          var patch = {}; patch['participants.' + self.uid] = { name: name, joinedAt: joinedAt };
-          p[self.uid] = { name: name, joinedAt: joinedAt }; data.participants = p;  // 로컬에도 즉시 반영
+        var mine = p[self.pid];
+        // 같은 닉네임이 이미 있으면 → 그 참여자로 그대로 로그인(신규 추가 없음, 기존 기록 유지).
+        // 없을 때만 신규 참여자 등록 (dot-path 로 다른 참여자 보존)
+        if (!mine) {
+          var joinedAt = Date.now();
+          var patch = {}; patch['participants.' + self.pid] = { name: name, joinedAt: joinedAt };
+          p[self.pid] = { name: name, joinedAt: joinedAt }; data.participants = p;  // 로컬에도 즉시 반영
           return ref.update(patch).then(function () { return data; });
         }
-        return data;
+        return data; // 기존 동일 닉네임 참여자 → 이어서 로그인
       }).then(function (challengeData) {
         // 방금 읽은 데이터로 즉시 첫 화면 렌더(실시간 리스너를 기다리지 않음)
         self.challengeData = challengeData;
         self._attach();  // 이후 실시간 갱신
+        // 관리자 여부 확인 (admins/{uid} 문서 존재 시 관리자)
+        self.db.collection('admins').doc(self.uid).get()
+          .then(function (d) { self.isAdmin = d.exists; self._emit(); })
+          .catch(function () {});
         console.log('[wc] ④-b 초기 데이터 확보 → 인증목록 로드');
         return ref.collection('verifications').orderBy('createdAt', 'desc').limit(200).get()
           .then(function (snap) { self.verifs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); })
@@ -295,20 +344,34 @@
       var self = this;
       var col = self.db.collection('challenges').doc(self.room).collection('verifications');
       var name = self.session.name;
+      var cat = payload.category || 'workout';
+      var slot = cat === 'meal' ? (payload.slot || 'lunch') : null;
       // 사진은 Firestore 문서에 압축 dataURL 로 인라인 저장 (별도 Storage 설정 불필요)
       var photo = payload.photo || null;
       if (photo && photo.length > 950000) { photo = null; console.warn('[wc] 사진 용량이 커서 제외됨(문서 1MB 한도)'); }
-      // 오늘 내 인증이 있으면 수정, 없으면 생성
-      return col.where('uid', '==', self.uid).where('date', '==', today()).limit(1).get().then(function (qs) {
+      // 운동은 (나,오늘) 1건, 식단은 (나,오늘,끼니) 1건으로 중복 없이 갱신.
+      // (uid,date)로만 조회하고 category/slot은 클라이언트에서 매칭 → 별도 색인 불필요
+      return col.where('uid', '==', self.pid).where('date', '==', today()).get().then(function (qs) {
+        var match = null;
+        qs.docs.forEach(function (d) {
+          var dd = d.data(), dcat = dd.category || (dd.type === '식단' ? 'meal' : 'workout');
+          if (dcat !== cat) return;
+          if (cat === 'meal') { if ((dd.slot || null) === slot) match = d; }
+          else match = d;
+        });
         var data = {
-          uid: self.uid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
-          createdAtMs: Date.now(), type: payload.type, duration: payload.duration, message: payload.message || '', photoUrl: photo
+          uid: self.pid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
+          createdAtMs: Date.now(), category: cat, slot: slot,
+          type: payload.type != null ? payload.type : null, duration: payload.duration != null ? payload.duration : null,
+          message: payload.message || '', photoUrl: photo,
+          kcal: payload.kcal != null ? payload.kcal : null,           // 식단 총 칼로리
+          foods: Array.isArray(payload.foods) ? payload.foods : null   // [{name,kcal}]
         };
-        if (!qs.empty) {
-          var docRef = qs.docs[0].ref, prev = qs.docs[0].data();
+        if (match) {
+          var prev = match.data();
           if (!photo && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 기존 유지
           data.cheers = prev.cheers || {};
-          return docRef.set(data);
+          return match.ref.set(data);
         }
         data.cheers = {};
         return col.add(data);
@@ -318,9 +381,9 @@
       var self = this;
       var ref = self.db.collection('challenges').doc(self.room).collection('verifications').doc(id);
       var v = self.verifs.find(function (x) { return x.id === id; });
-      var mine = v && v.cheers && v.cheers[self.uid];
+      var mine = v && v.cheers && v.cheers[self.pid];
       var patch = {};
-      patch['cheers.' + self.uid] = mine ? self.fb.firestore.FieldValue.delete() : true;
+      patch['cheers.' + self.pid] = mine ? self.fb.firestore.FieldValue.delete() : true;
       return ref.update(patch);
     },
     reset: function () { return Promise.resolve(); }, // 실서비스에선 초기화 없음
@@ -336,22 +399,71 @@
       // joinedAt 순으로 정렬해 색상 안정적으로 배정
       var ids = Object.keys(pmap).sort(function (a, b) { return (pmap[a].joinedAt || 0) - (pmap[b].joinedAt || 0); });
       // 나를 항상 첫 번째(초록)로
-      ids = [self.uid].concat(ids.filter(function (x) { return x !== self.uid; }));
+      ids = [self.pid].concat(ids.filter(function (x) { return x !== self.pid; }));
       var people = buildPeople(ids, function (uid) { return (pmap[uid] && pmap[uid].name) || '친구'; });
       var challenge = Object.assign({}, this.challengeData, { participants: ids });
       var verifs = this.verifs.map(function (v) {
         var cheers = v.cheers || {};
+        var cat = v.category || (v.type === '식단' ? 'meal' : 'workout');
         return {
           id: v.id, userId: v.uid, date: v.date,
           createdAt: v.createdAtMs ? new Date(v.createdAtMs).toISOString() : new Date().toISOString(),
+          category: cat, slot: v.slot || null,
           type: v.type, duration: v.duration, message: v.message, photo: v.photoUrl || null,
-          cheers: Object.keys(cheers).length, cheeredByMe: !!cheers[self.uid]
+          kcal: v.kcal != null ? v.kcal : null, foods: v.foods || null,
+          cheers: Object.keys(cheers).length, cheeredByMe: !!cheers[self.pid]
         };
       });
       emit({
-        mode: 'firebase', me: people[self.uid], challenge: challenge, people: people,
-        verifications: verifs, history: []
+        mode: 'firebase', me: people[self.pid], challenge: challenge, people: people,
+        verifications: verifs, history: [], isAdmin: !!self.isAdmin
       });
+    },
+
+    /* ---------- 관리자 기능 (전체 방 관리) ---------- */
+    // 비밀번호로 관리자 인증 → config/admin.code 와 일치하면 스스로 admins 등록
+    adminAuthenticate: function (password) {
+      var self = this;
+      var pre = self.uid ? Promise.resolve() : self.auth.signInAnonymously().then(function (c) { self.uid = c.user.uid; });
+      return pre.then(function () {
+        return self.db.collection('admins').doc(self.uid).set({ code: password, since: Date.now() });
+      }).then(function () { self.isAdmin = true; return true; });
+    },
+    adminListRooms: function () {
+      return this.db.collection('challenges').get().then(function (snap) {
+        return snap.docs.map(function (d) {
+          var data = d.data(), p = data.participants || {};
+          return { code: d.id, name: data.name, participants: Object.keys(p).length, startDate: data.startDate, penalty: data.penalty };
+        }).sort(function (a, b) { return (b.startDate || '').localeCompare(a.startDate || ''); });
+      });
+    },
+    adminRoomDetail: function (code) {
+      var ref = this.db.collection('challenges').doc(code);
+      return ref.get().then(function (doc) {
+        var data = doc.data() || {}, p = data.participants || {};
+        return ref.collection('verifications').get().then(function (vs) {
+          var counts = {};
+          vs.docs.forEach(function (v) { var u = v.data().uid; counts[u] = (counts[u] || 0) + 1; });
+          var participants = Object.keys(p).map(function (uid) { return { uid: uid, name: (p[uid] && p[uid].name) || uid, count: counts[uid] || 0 }; });
+          return { code: code, challenge: data, participants: participants, verifCount: vs.size };
+        });
+      });
+    },
+    adminResetVerifs: function (code) {
+      var self = this, ref = this.db.collection('challenges').doc(code);
+      return ref.collection('verifications').get().then(function (vs) {
+        var batch = self.db.batch();
+        vs.docs.forEach(function (v) { batch.delete(v.ref); });
+        return batch.commit();
+      });
+    },
+    adminDeleteRoom: function (code) {
+      var self = this, ref = this.db.collection('challenges').doc(code);
+      return self.adminResetVerifs(code).then(function () { return ref.delete(); });
+    },
+    adminRemoveParticipant: function (code, uid) {
+      var patch = {}; patch['participants.' + uid] = this.fb.firestore.FieldValue.delete();
+      return this.db.collection('challenges').doc(code).update(patch);
     }
   };
 
@@ -359,6 +471,16 @@
     var next = Object.assign({}, p);
     next[uid] = { name: name, joinedAt: Date.now() };
     return next;
+  }
+
+  /* 닉네임 → 방 안에서의 안정적 신원 키.
+     - 대소문자/앞뒤 공백 무시 → 같은 닉네임은 항상 같은 키(같은 참여자)로 로그인.
+     - 결과는 영숫자라 Firestore 맵 키/dot-path 업데이트에 안전. */
+  function keyOf(name) {
+    var n = (name || '').trim().toLowerCase();
+    var h = 2166136261;
+    for (var i = 0; i < n.length; i++) { h ^= n.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return 'p' + (h >>> 0).toString(36);
   }
 
   /* 프라미스 타임아웃 (무한 대기 방지) */
@@ -393,6 +515,8 @@
   window.DB = {
     mode: impl.mode,
     EXERCISE_TYPES: EXERCISE_TYPES,
+    MEAL_SLOTS: MEAL_SLOTS,
+    slotLabel: slotLabel,
     ymd: ymd, today: today, addDays: addDays,
     init: function () { return impl.init(); },
     needsLogin: function () { return impl.needsLogin(); },
@@ -404,6 +528,39 @@
     toggleCheer: function (id) { return impl.toggleCheer(id); },
     reset: function () { return impl.reset(); },
     inviteInfo: function () { return impl.inviteInfo(); },
+    adminAuthenticate: function (pw) { return impl.adminAuthenticate(pw); },
+    adminListRooms: function () { return impl.adminListRooms(); },
+    adminRoomDetail: function (code) { return impl.adminRoomDetail(code); },
+    adminResetVerifs: function (code) { return impl.adminResetVerifs(code); },
+    adminDeleteRoom: function (code) { return impl.adminDeleteRoom(code); },
+    adminRemoveParticipant: function (code, uid) { return impl.adminRemoveParticipant(code, uid); },
+    estimateCalories: estimateCalories,
     _impl: impl
   };
+
+  /* =====================================================================
+     식단 사진 → 칼로리 추정 (Cloudflare Worker 중계 → Gemini Vision)
+     - window.CALORIE_API_URL 로 POST { image: dataURL }
+     - 응답 { foods:[{name,kcal}], totalKcal, note }
+     모드(Local/Firebase)와 무관하게 동작 (순수 네트워크 호출)
+     ===================================================================== */
+  function estimateCalories(dataUrl) {
+    var url = window.CALORIE_API_URL;
+    if (!url) return Promise.reject(new Error('칼로리 분석 서버가 설정되지 않았습니다. firebase-config.js 의 CALORIE_API_URL 을 채워주세요.'));
+    if (!dataUrl) return Promise.reject(new Error('먼저 식단 사진을 올려주세요.'));
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl })
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error('분석 실패(' + r.status + ') ' + (t || '').slice(0, 900)); });
+      return r.json();
+    }).then(function (j) {
+      var foods = Array.isArray(j && j.foods) ? j.foods.filter(function (f) { return f && f.name; }).map(function (f) {
+        return { name: String(f.name), kcal: Math.max(0, Math.round(+f.kcal || 0)) };
+      }) : [];
+      var total = Math.round(+((j && j.totalKcal)) || foods.reduce(function (a, f) { return a + f.kcal; }, 0));
+      return { foods: foods, totalKcal: total, note: (j && j.note) || '' };
+    });
+  }
 })();

@@ -163,7 +163,79 @@ body {
   border: none; cursor: pointer; font-family: var(--font-body);
 }
 .cheer-btn.cheered { background: var(--green-bg); color: var(--green); }
+.kcal-badge {
+  margin-top: 8px; display: inline-block; background: oklch(95% 0.05 75); color: oklch(45% 0.12 60);
+  font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 10px; word-break: break-word;
+}
 .empty { text-align: center; color: var(--ink-mute); font-size: 13px; padding: 30px 10px; }
+
+/* ===== 식단 칼로리 분석 ===== */
+.analyze-btn {
+  width: 100%; padding: 13px; border: none; border-radius: 14px; cursor: pointer;
+  background: oklch(80% 0.14 60); color: oklch(28% 0.08 60); font-weight: 800;
+  font-family: var(--font-body); font-size: 15px;
+}
+.analyze-btn.disabled { background: var(--field); color: var(--ink-mute); cursor: not-allowed; }
+.kcal-analyzing {
+  padding: 16px; text-align: center; background: var(--field); border-radius: 14px;
+  font-weight: 700; color: var(--ink-soft); font-size: 14px;
+}
+.kcal-result { background: oklch(97% 0.02 75); border: 1px solid oklch(88% 0.05 75); border-radius: 14px; padding: 14px; }
+.kcal-total { font-size: 18px; font-weight: 800; color: oklch(40% 0.13 55); }
+.kcal-total b { font-size: 24px; }
+.kcal-foods { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.kcal-food { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); background: var(--field); border-radius: 10px; padding: 8px 10px; }
+.kcal-food .kf-name { flex: 1; min-width: 0; word-break: break-word; }
+.kcal-food .kf-cal { font-weight: 700; color: var(--ink); white-space: nowrap; }
+.kcal-food .kf-x { border: none; background: transparent; color: var(--ink-mute); font-size: 14px; cursor: pointer; padding: 0 2px; }
+.kcal-hint { font-size: 11px; color: var(--ink-mute); margin-top: 8px; line-height: 1.5; }
+
+/* 총 칼로리 직접 수정 */
+.kcal-total-edit { margin-top: 12px; }
+.kcal-input-row { display: flex; align-items: center; gap: 8px; }
+.kcal-input-row .kie-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.kcal-input { flex: 1; min-width: 0; padding: 12px 14px; border: 1.5px solid oklch(88% 0.03 60); border-radius: 12px;
+  font-size: 18px; font-weight: 800; color: oklch(40% 0.13 55); font-family: var(--font-body); background: #fff; }
+.kcal-input-row .kie-unit { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+
+/* 운동/식단 전환 토글 */
+.cat-toggle { display: flex; gap: 8px; background: var(--field); padding: 5px; border-radius: 14px; }
+.cat-btn { flex: 1; padding: 11px; border: none; border-radius: 10px; background: transparent; cursor: pointer;
+  font-family: var(--font-body); font-size: 14px; font-weight: 800; color: var(--ink-mute); }
+.cat-btn.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px oklch(0% 0 0 / 0.08); }
+
+/* 피드 액션 (응원 + 수정) / 식단 요약 */
+.fb-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+.fb-actions .cheer-btn { margin-top: 0; }
+.edit-btn { background: var(--field); color: var(--ink-soft); font-size: 12px; font-weight: 700;
+  padding: 6px 12px; border-radius: 100px; border: none; cursor: pointer; font-family: var(--font-body); }
+.kcal-sum { font-size: 12px; font-weight: 800; color: oklch(45% 0.12 60); }
+
+/* 식단 하루 보기 */
+.p-chip.sel { cursor: pointer; border: 1.5px solid transparent; transition: border-color .1s; }
+.p-chip.sel.active { border-color: oklch(70% 0.14 60); background: oklch(97% 0.03 75); }
+.day-nav { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.day-arrow { width: 40px; height: 40px; border: none; border-radius: 12px; background: var(--field);
+  font-size: 22px; color: var(--ink-soft); cursor: pointer; font-family: var(--font-body); flex-shrink: 0; }
+.day-arrow.disabled { color: oklch(85% 0.02 60); cursor: default; }
+.day-label { flex: 1; text-align: center; font-weight: 800; font-size: 15px; color: var(--ink); }
+.meal-daytotal { margin-top: 12px; text-align: center; font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.meal-daytotal b { font-size: 20px; color: oklch(45% 0.13 55); margin: 0 2px; }
+.meal-slot { display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid var(--line, oklch(92% 0.01 60));
+  border-radius: 14px; padding: 10px 12px; box-shadow: 0 1px 3px oklch(0% 0 0 / 0.04); }
+.meal-slot.empty { background: var(--field); box-shadow: none; }
+.ms-photo { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
+.ms-emoji { width: 46px; height: 46px; border-radius: 10px; background: oklch(95% 0.05 75); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+.ms-emoji.faded { background: transparent; opacity: 0.4; }
+.ms-body { flex: 1; min-width: 0; }
+.ms-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ms-slot { font-weight: 800; font-size: 14px; color: var(--ink); }
+.ms-cal { font-weight: 800; font-size: 13px; color: oklch(45% 0.12 60); white-space: nowrap; }
+.ms-none { font-size: 12px; color: var(--ink-mute); }
+.ms-foods { font-size: 12px; color: var(--ink-soft); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-edit { border: none; background: transparent; font-size: 16px; cursor: pointer; flex-shrink: 0; padding: 4px; }
+.ms-add { border: none; background: var(--primary-bg); color: var(--primary-d); font-weight: 700; font-size: 12px;
+  padding: 7px 12px; border-radius: 100px; cursor: pointer; font-family: var(--font-body); flex-shrink: 0; }
 
 /* ===== 인증 업로드 ===== */
 .uploader {
@@ -293,6 +365,16 @@ body {
 .invite-box { background: var(--green-bg); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .invite-code { font-size: 13px; font-weight: 700; color: oklch(35% 0.1 155); }
 .p-mode { font-size: 12px; color: var(--ink-mute); margin-top: 2px; }
+
+/* ===== 관리자 콘솔 ===== */
+.admin-open { width: 100%; background: oklch(40% 0.03 60); color: #fff; border: none; border-radius: 16px; padding: 15px; font-weight: 700; font-size: 15px; cursor: pointer; font-family: var(--font-body); }
+.admin-room { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 16px; padding: 14px 16px; box-shadow: var(--shadow-card); cursor: pointer; }
+.ar-name { font-size: 14px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ar-code { font-size: 11px; color: var(--ink-mute); margin-top: 2px; word-break: break-all; }
+.ar-arrow { font-size: 20px; color: var(--ink-mute); }
+.admin-danger { width: 100%; background: var(--field); color: oklch(50% 0.14 25); border: 1px solid oklch(88% 0.05 25); border-radius: 14px; padding: 13px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: var(--font-body); }
+.admin-danger.strong { background: oklch(60% 0.18 25); color: #fff; border: none; }
+
 
 /* ===== 토스트 ===== */
 .toast {
