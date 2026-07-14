@@ -174,6 +174,7 @@
       h('div', { class: 'feed-body' }, [
         h('div', { class: 'fb-head' }, [h('div', { class: 'fb-who' }, [title]), h('div', { class: 'fb-time' }, [relTime(v.createdAt)])]),
         meal && v.kcal != null ? h('div', { class: 'kcal-badge' }, ['🍽 약 ' + v.kcal + ' kcal' + (v.foods && v.foods.length ? ' · ' + v.foods.map(function (f) { return f.name; }).join(', ') : '')]) : null,
+        !meal && v.kcal != null ? h('div', { class: 'kcal-badge burn' }, ['🔥 약 ' + v.kcal.toLocaleString() + ' kcal 소모']) : null,
         v.message ? h('div', { class: 'fb-msg' }, [v.message]) : null,
         h('div', { class: 'fb-actions' }, [
           h('button', { class: 'cheer-btn' + (v.cheeredByMe ? ' cheered' : ''), onclick: function () { DB.toggleCheer(v.id); } }, ['👏 응원 ' + v.cheers]),
@@ -203,7 +204,8 @@
     var meal = draft.category === 'meal';
     var uploaderInner = draft.photo ? [h('img', { src: draft.photo, alt: '미리보기' })]
       : [h('div', { class: 'u-icon' }, [meal ? '🍽' : '📷']), h('div', { class: 'u-text' }, [meal ? '식단 사진 올리기' : '사진 찍어서 인증하기'])];
-    var fileInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none', id: 'photoInput' });
+    // capture 속성을 빼면 모바일에서 '사진 찍기 / 앨범에서 선택' 을 모두 고를 수 있음
+    var fileInput = h('input', { type: 'file', accept: 'image/*', style: 'display:none', id: 'photoInput' });
     // 사진이 바뀌면 이전 칼로리 분석 결과는 무효화
     fileInput.addEventListener('change', function (e) { var f = e.target.files[0]; if (f) downscaleImage(f, function (u) { draft.photo = u; draft.kcal = null; draft.foods = null; render(); }); });
 
@@ -225,6 +227,11 @@
       ];
     } else {
       var chips = EXERCISE_TYPES.map(function (t) { return h('button', { class: 'chip' + (draft.type === t ? ' active' : ''), onclick: function () { draft.type = draft.type === t ? null : t; render(); } }, [t]); });
+      // 예상 소모 칼로리 (몸무게 × MET × 시간). 몸무게는 기기에 저장돼 유지됨.
+      function burnText() { var b = draft.type ? DB.estimateBurn(draft.type, draft.duration, DB.getWeight()) : null; return b != null ? '약 ' + b.toLocaleString() + ' kcal' : '운동 종류를 선택하면 계산돼요'; }
+      var estSpan = h('span', { class: 'burn-val' }, [burnText()]);
+      var weightInput = h('input', { type: 'number', class: 'kcal-input', min: '20', max: '250', inputmode: 'numeric', value: String(DB.getWeight()) });
+      weightInput.addEventListener('input', function () { DB.setWeight(+weightInput.value || 0); estSpan.textContent = burnText(); });
       body = [
         h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 종류']), h('div', { class: 'chips' }, chips)]),
         h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 시간']),
@@ -232,7 +239,10 @@
             h('button', { onclick: function () { draft.duration = Math.max(5, draft.duration - 5); render(); } }, ['–']),
             h('div', { class: 'step-val' }, [draft.duration + '분']),
             h('button', { onclick: function () { draft.duration = Math.min(300, draft.duration + 5); render(); } }, ['+'])
-          ])])
+          ])]),
+        h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['몸무게 (소모 칼로리 계산용)']),
+          h('div', { class: 'kcal-input-row' }, [weightInput, h('span', { class: 'kie-unit' }, ['kg'])])]),
+        h('div', { class: 'burn-box' }, [h('span', {}, ['🔥 예상 소모 칼로리 ']), estSpan])
       ];
     }
 
@@ -308,7 +318,8 @@
       dest = 'meals';
     } else {
       if (!draft.type) { toast('운동 종류를 선택해주세요'); return; }
-      payload = { category: 'workout', type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo };
+      var burned = DB.estimateBurn(draft.type, draft.duration, DB.getWeight());  // 소모 칼로리 계산·저장
+      payload = { category: 'workout', type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo, kcal: burned };
       dest = 'home';
     }
     toast('저장 중...');

@@ -43,6 +43,17 @@
   ];
   function slotLabel(key) { for (var i = 0; i < MEAL_SLOTS.length; i++) if (MEAL_SLOTS[i].key === key) return MEAL_SLOTS[i].label; return '식사'; }
 
+  // 운동별 MET(활동대사량). 소모 kcal ≈ MET × 체중(kg) × 시간(h)
+  var MET = { '웨이트': 5, '러닝': 9.5, '홈트': 5, '요가': 3, '수영': 7, '자전거': 7, '등산': 6.5, '줄넘기': 11 };
+  function estimateBurn(type, minutes, weightKg) {
+    var met = MET[type] || 4;
+    var w = weightKg > 0 ? weightKg : 65;
+    return Math.max(0, Math.round(met * w * ((minutes || 0) / 60)));
+  }
+  var WEIGHT_KEY = 'wchallenge:weight';
+  function getWeight() { var w = +(typeof localStorage !== 'undefined' && localStorage.getItem(WEIGHT_KEY)); return w > 0 ? w : 65; }
+  function setWeight(w) { try { localStorage.setItem(WEIGHT_KEY, String(Math.max(0, Math.round(w) || 0))); } catch (e) {} }
+
   /* ---------- 날짜 유틸 ---------- */
   function ymd(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -195,7 +206,7 @@
           }
         });
       }
-      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 6e5).toISOString(), category: 'workout', type: '웨이트', duration: 45, message: '오늘도 하체 부셨습니다 🍗', photo: null, cheers: 2 });
+      verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 6e5).toISOString(), category: 'workout', type: '웨이트', duration: 45, kcal: estimateBurn('웨이트', 45, 60), message: '오늘도 하체 부셨습니다 🍗', photo: null, cheers: 2 });
       verifications.push({ id: id++, userId: 'me', date: today(), createdAt: new Date(Date.now() - 3e5).toISOString(), category: 'meal', slot: 'lunch', message: '닭가슴살 도시락', photo: null, kcal: 620, foods: [{ name: '닭가슴살 도시락', kcal: 620 }], cheers: 0 });
       verifications.push({ id: id++, userId: 'minji', date: today(), createdAt: new Date(Date.now() - 2e5).toISOString(), category: 'meal', slot: 'breakfast', message: '아침 오트밀', photo: null, kcal: 350, foods: [{ name: '오트밀', kcal: 250 }, { name: '바나나', kcal: 100 }], cheers: 1 });
       return {
@@ -517,6 +528,7 @@
     EXERCISE_TYPES: EXERCISE_TYPES,
     MEAL_SLOTS: MEAL_SLOTS,
     slotLabel: slotLabel,
+    estimateBurn: estimateBurn, getWeight: getWeight, setWeight: setWeight,
     ymd: ymd, today: today, addDays: addDays,
     init: function () { return impl.init(); },
     needsLogin: function () { return impl.needsLogin(); },

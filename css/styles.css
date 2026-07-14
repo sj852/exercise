@@ -167,6 +167,10 @@ body {
   margin-top: 8px; display: inline-block; background: oklch(95% 0.05 75); color: oklch(45% 0.12 60);
   font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 10px; word-break: break-word;
 }
+.kcal-badge.burn { background: oklch(94% 0.06 35); color: oklch(48% 0.16 30); }
+.burn-box { margin-top: 14px; background: oklch(96% 0.04 40); border-radius: 14px; padding: 14px;
+  text-align: center; font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.burn-box .burn-val { font-size: 20px; font-weight: 800; color: oklch(48% 0.16 30); margin-left: 4px; }
 .empty { text-align: center; color: var(--ink-mute); font-size: 13px; padding: 30px 10px; }
 
 /* ===== 식단 칼로리 분석 ===== */
