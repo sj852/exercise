@@ -33,7 +33,7 @@
     'oklch(80% 0.14 60)',  // 주황
     'oklch(75% 0.13 330)'  // 핑크
   ];
-  var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산'];
+  var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산', '줄넘기'];
 
   /* ---------- 날짜 유틸 ---------- */
   function ymd(d) {
@@ -189,7 +189,10 @@
         self.fb.initializeApp(window.FIREBASE_CONFIG);
         self.auth = self.fb.auth();
         self.db = self.fb.firestore();
-        self.storage = self.fb.storage();
+        // 일부 네트워크/브라우저 확장이 실시간 스트리밍(WebChannel)을 막아 멈추는 것 방지
+        // 스트리밍(WebChannel)이 막히는 환경에서도 실시간 리스너가 동작하도록 long-polling 강제
+        // (merge:true 를 쓰면 내부 autoDetect 설정과 충돌하므로 force 만 단독 지정)
+        try { self.db.settings({ experimentalForceLongPolling: true }); } catch (e) { console.warn('[wc] firestore settings 실패:', e && e.message); }
         return new Promise(function (resolve) {
           self.auth.onAuthStateChanged(function (user) {
             self.uid = user ? user.uid : null;
@@ -207,10 +210,15 @@
       var self = this;
       var name = (opts.name || '나').trim();
       var room = (opts.room || 'my-crew').trim().toLowerCase().replace(/\s+/g, '-');
-      return this.auth.signInAnonymously().then(function (cred) {
+      console.log('[wc] ① 익명 인증 요청...');
+      var flow = this.auth.signInAnonymously().then(function (cred) {
         self.uid = cred.user.uid;
+        console.log('[wc] ② 인증 성공 uid=' + self.uid + ' → 방(' + room + ') 참여 시도');
         return self._join(name, room);
+      }).then(function () {
+        console.log('[wc] ⑤ 참여 완료 → 화면 전환');
       });
+      return withTimeout(flow, 15000, 'Firebase 연결이 지연됩니다.\n① Authentication에서 "익명 로그인"이 켜져 있는지\n② Firestore 데이터베이스가 생성됐는지\n③ 광고차단/보안 확장을 잠시 꺼보세요.\n(콘솔의 [wc] 로그가 어디서 멈췄는지 알려주세요)');
     },
     logout: function () {
       var self = this;
@@ -226,22 +234,40 @@
       self.session = { name: name, room: room };
       localStorage.setItem(SESS_KEY, JSON.stringify(self.session));
       var ref = self.db.collection('challenges').doc(room);
-      return self.db.runTransaction(function (tx) {
-        return tx.get(ref).then(function (doc) {
-          if (!doc.exists) {
-            // 방이 없으면 새 챌린지 생성 (첫 사람이 방장)
-            tx.set(ref, {
-              name: '운동 인증 챌린지', durationDays: 30, startDate: today(),
-              penalty: 5000, reward: '주간 1등에게 나머지가 커피 쏘기 ☕', deadline: '23:00',
-              participants: makeParticipant({}, self.uid, name)
-            });
-          } else {
-            var p = doc.data().participants || {};
-            if (!p[self.uid]) { tx.update(ref, { participants: makeParticipant(p, self.uid, name) }); }
-            else if (p[self.uid].name !== name) { p[self.uid].name = name; tx.update(ref, { participants: p }); }
-          }
-        });
-      }).then(function () { self._attach(); });
+      // 트랜잭션은 스트리밍 연결이 막히면 멈추므로, 단순 읽기+쓰기로 참여 처리
+      console.log('[wc] ③ 방 문서 읽는 중...');
+      return ref.get().then(function (doc) {
+        console.log('[wc] ④ 방 문서 읽기 완료 (존재=' + doc.exists + ')');
+        if (!doc.exists) {
+          // 방이 없으면 새 챌린지 생성 (첫 사람이 방장)
+          var fresh = {
+            name: '운동 인증 챌린지', durationDays: 30, startDate: today(),
+            penalty: 5000, reward: '주간 1등에게 나머지가 커피 쏘기 ☕', deadline: '23:00',
+            participants: makeParticipant({}, self.uid, name)
+          };
+          return ref.set(fresh).then(function () { return fresh; });
+        }
+        // 이미 있으면 나만 참여자에 추가/이름 갱신 (dot-path 로 다른 참여자 보존)
+        var data = doc.data();
+        var p = data.participants || {};
+        var mine = p[self.uid];
+        if (!mine || mine.name !== name) {
+          var joinedAt = (mine && mine.joinedAt) || Date.now();
+          var patch = {}; patch['participants.' + self.uid] = { name: name, joinedAt: joinedAt };
+          p[self.uid] = { name: name, joinedAt: joinedAt }; data.participants = p;  // 로컬에도 즉시 반영
+          return ref.update(patch).then(function () { return data; });
+        }
+        return data;
+      }).then(function (challengeData) {
+        // 방금 읽은 데이터로 즉시 첫 화면 렌더(실시간 리스너를 기다리지 않음)
+        self.challengeData = challengeData;
+        self._attach();  // 이후 실시간 갱신
+        console.log('[wc] ④-b 초기 데이터 확보 → 인증목록 로드');
+        return ref.collection('verifications').orderBy('createdAt', 'desc').limit(200).get()
+          .then(function (snap) { self.verifs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); })
+          .catch(function (e) { console.warn('[wc] 초기 인증 로드 실패(무시):', e && e.message); })
+          .then(function () { self._emit(); });
+      });
     },
 
     _attach: function () {
@@ -269,23 +295,23 @@
       var self = this;
       var col = self.db.collection('challenges').doc(self.room).collection('verifications');
       var name = self.session.name;
-      var uploadPhoto = payload.photo ? dataUrlToStorage(self.storage, self.room, self.uid, payload.photo) : Promise.resolve(null);
-      return uploadPhoto.then(function (url) {
-        // 오늘 내 인증이 있으면 수정, 없으면 생성
-        return col.where('uid', '==', self.uid).where('date', '==', today()).limit(1).get().then(function (qs) {
-          var data = {
-            uid: self.uid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
-            createdAtMs: Date.now(), type: payload.type, duration: payload.duration, message: payload.message || '', photoUrl: url || null
-          };
-          if (!qs.empty) {
-            var docRef = qs.docs[0].ref, prev = qs.docs[0].data();
-            if (!url && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 유지
-            data.cheers = prev.cheers || {};
-            return docRef.set(data);
-          }
-          data.cheers = {};
-          return col.add(data);
-        });
+      // 사진은 Firestore 문서에 압축 dataURL 로 인라인 저장 (별도 Storage 설정 불필요)
+      var photo = payload.photo || null;
+      if (photo && photo.length > 950000) { photo = null; console.warn('[wc] 사진 용량이 커서 제외됨(문서 1MB 한도)'); }
+      // 오늘 내 인증이 있으면 수정, 없으면 생성
+      return col.where('uid', '==', self.uid).where('date', '==', today()).limit(1).get().then(function (qs) {
+        var data = {
+          uid: self.uid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
+          createdAtMs: Date.now(), type: payload.type, duration: payload.duration, message: payload.message || '', photoUrl: photo
+        };
+        if (!qs.empty) {
+          var docRef = qs.docs[0].ref, prev = qs.docs[0].data();
+          if (!photo && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 기존 유지
+          data.cheers = prev.cheers || {};
+          return docRef.set(data);
+        }
+        data.cheers = {};
+        return col.add(data);
       });
     },
     toggleCheer: function (id) {
@@ -335,13 +361,9 @@
     return next;
   }
 
-  /* dataURL → Firebase Storage 업로드 → downloadURL */
-  function dataUrlToStorage(storage, room, uid, dataUrl) {
-    return fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
-      var path = 'challenges/' + room + '/' + uid + '/' + Date.now() + '.jpg';
-      var ref = storage.ref().child(path);
-      return ref.put(blob).then(function () { return ref.getDownloadURL(); });
-    });
+  /* 프라미스 타임아웃 (무한 대기 방지) */
+  function withTimeout(p, ms, msg) {
+    return Promise.race([p, new Promise(function (_, reject) { setTimeout(function () { reject(new Error(msg)); }, ms); })]);
   }
 
   /* Firebase compat SDK 동적 로드 (설정이 있을 때만) */
@@ -349,7 +371,7 @@
     if (window.firebase && window.firebase.firestore) return Promise.resolve();
     var V = '10.12.2';
     var base = 'https://www.gstatic.com/firebasejs/' + V + '/';
-    var files = ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js', 'firebase-storage-compat.js'];
+    var files = ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js'];
     return files.reduce(function (chain, f) {
       return chain.then(function () {
         return new Promise(function (resolve, reject) {

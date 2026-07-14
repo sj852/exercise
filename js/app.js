@@ -109,6 +109,7 @@
     ]));
   }
   function showApp() {
+    console.log('[wc] ⑥ showApp 호출 → 앱 화면 표시' + (state ? ' (데이터 있음)' : ' (데이터 대기중)'));
     gateEl.hidden = true; appEl.hidden = false;
     navTo('home');
   }
@@ -182,9 +183,9 @@
       h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 종류']), h('div', { class: 'chips' }, chips)]),
       h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['운동 시간']),
         h('div', { class: 'stepper' }, [
-          h('button', { onclick: function () { draft.duration = Math.max(10, draft.duration - 10); render(); } }, ['–']),
+          h('button', { onclick: function () { draft.duration = Math.max(5, draft.duration - 5); render(); } }, ['–']),
           h('div', { class: 'step-val' }, [draft.duration + '분']),
-          h('button', { onclick: function () { draft.duration = Math.min(300, draft.duration + 10); render(); } }, ['+'])
+          h('button', { onclick: function () { draft.duration = Math.min(300, draft.duration + 5); render(); } }, ['+'])
         ])]),
       h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['한마디 남기기']), msgArea]),
       h('button', { class: 'btn-primary', style: 'margin-top:24px', onclick: submitVerification }, ['인증 완료하기 🔥'])
@@ -380,7 +381,11 @@
   document.querySelectorAll('.nav-item').forEach(function (btn) { btn.addEventListener('click', function () { navTo(btn.dataset.screen); }); });
 
   /* ---------- 부트스트랩 ---------- */
-  DB.onData(function (snap) { state = snap; render(); });
+  var _gotFirst = false;
+  DB.onData(function (snap) {
+    if (!_gotFirst) { _gotFirst = true; console.log('[wc] ⑦ 첫 데이터 스냅샷 수신 → 화면 렌더'); }
+    state = snap; render();
+  });
   DB.init().then(function () {
     if (DB.needsLogin()) showGate(); else showApp();
   }).catch(function (e) {
@@ -396,8 +401,14 @@
     ]));
   });
 
-  /* ---------- 서비스 워커(PWA/오프라인) ---------- */
+  /* ---------- 서비스 워커: 옛 캐시가 낡은 코드를 서빙하는 문제를 막기 위해 해제 ----------
+     (오프라인/설치 PWA가 다시 필요하면 아래 블록을 navigator.serviceWorker.register('sw.js') 로 되돌리세요) */
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+    navigator.serviceWorker.getRegistrations().then(function (rs) {
+      rs.forEach(function (r) { r.unregister(); });
+    }).catch(function () {});
+  }
+  if (window.caches && caches.keys) {
+    caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); }).catch(function () {});
   }
 })();

@@ -28,6 +28,8 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* hidden 속성은 #app/.gate 의 display 지정보다 항상 우선해야 함(화면 전환의 핵심) */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   font-family: var(--font-body);

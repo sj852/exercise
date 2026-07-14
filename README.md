@@ -11,7 +11,7 @@
 | | 데모 모드 (기본) | 실시간 모드 (Firebase 연동) |
 |---|---|---|
 | 조건 | `js/firebase-config.js` 비어 있음 | 설정값 채움 |
-| 데이터 저장 | 내 브라우저(localStorage) | 클라우드(Firestore/Storage) |
+| 데이터 저장 | 내 브라우저(localStorage) | 클라우드(Firestore, 사진 포함) |
 | 친구와 공유 | ❌ (친구는 데모 데이터) | ✅ **같은 방 코드면 실시간 공유** |
 | 로그인 | 닉네임만 | 닉네임 + 방 코드(익명 인증) |
 | 용도 | 체험·포트폴리오 | 진짜 서비스 |
@@ -101,9 +101,9 @@ GitHub 저장소 → **Settings → Pages** → Source: **main / (root)** 저장
 - 콘솔 → **빌드 → Firestore Database → 데이터베이스 만들기** (프로덕션 모드, 지역 선택).
 - **규칙** 탭 → 이 저장소의 **`firestore.rules`** 내용을 그대로 붙여넣고 **게시**.
 
-### 5) Storage 만들기 + 규칙 넣기 (사진 업로드용)
-- 콘솔 → **빌드 → Storage → 시작하기**.
-- **규칙** 탭 → **`storage.rules`** 내용을 붙여넣고 **게시**.
+### 5) (선택) Storage — 지금은 필요 없음
+사진은 **Firestore 문서에 압축해서 직접 저장**하도록 되어 있어 **Storage를 만들지 않아도 사진 인증이 됩니다.** (별도 요금제 불필요)
+> 나중에 대용량/원본 사진을 Storage로 옮기고 싶을 때만 `storage.rules`를 쓰면 됩니다.
 
 ### 6) 도메인 허용
 - Authentication → **설정 → 승인된 도메인**에 배포 주소 추가
@@ -117,9 +117,9 @@ GitHub 저장소 → **Settings → Pages** → Source: **main / (root)** 저장
 ### 데이터 구조 (참고)
 ```
 challenges/{방코드}                     설정 + participants{uid:{name,joinedAt}}
-challenges/{방코드}/verifications/{id}  {uid,name,date,type,duration,message,photoUrl,cheers{uid:true}}
-Storage: challenges/{방코드}/{uid}/{ts}.jpg
+challenges/{방코드}/verifications/{id}  {uid,name,date,type,duration,message,photoUrl(dataURL),cheers{uid:true}}
 ```
+> 사진(photoUrl)은 압축된 dataURL 로 문서 안에 저장됩니다(문서당 1MB 한도 내로 자동 축소).
 
 ### 비용
 - Spark(무료): 문서 읽기 5만/일, 저장 1GB, Storage 5GB 등. 친구 몇 명 규모면 **무료로 충분**합니다.
@@ -129,5 +129,5 @@ Storage: challenges/{방코드}/{uid}/{ts}.jpg
 ## 자주 묻는 것
 - **Q. 지금 그냥 써도 되나요?** → 네. 설정 안 하면 데모 모드로 혼자 완전하게 동작합니다.
 - **Q. 로그인이 부담돼요.** → 익명 인증이라 이메일·비번 없이 닉네임만으로 입장합니다.
-- **Q. 사진이 안 올라가요.** → Storage 생성 + `storage.rules` 게시 여부, `https`/`localhost` 접속 여부를 확인하세요.
+- **Q. 사진이 안 올라가요.** → 사진은 Firestore에 바로 저장되므로 Storage 설정이 없어도 됩니다. 카메라/사진 권한과 `https`/`localhost` 접속인지 확인하세요. (너무 큰 사진은 자동 축소되며, 그래도 1MB를 넘으면 사진 없이 저장됩니다.)
 - **Q. Google 로그인 추가하려면?** → Authentication에서 Google 공급자를 켜고, `data.js`의 `signInAnonymously()`를 `signInWithPopup(googleProvider)`로 바꾸면 됩니다.

@@ -1,5 +1,5 @@
 /* 서비스 워커 — 앱 셸 캐시(오프라인 지원) */
-var CACHE = 'wchallenge-v1';
+var CACHE = 'wchallenge-v4';
 var ASSETS = [
   './', './index.html',
   './css/styles.css',
@@ -16,14 +16,18 @@ self.addEventListener('activate', function (e) {
   }).then(function () { return self.clients.claim(); }));
 });
 self.addEventListener('fetch', function (e) {
-  var url = e.request.url;
-  // Firebase/구글폰트 등 외부 요청은 그냥 네트워크로 (캐시하지 않음)
-  if (e.request.method !== 'GET' || url.indexOf('firebase') > -1 || url.indexOf('googleapis') > -1 || url.indexOf('gstatic') > -1) return;
+  var req = e.request;
+  if (req.method !== 'GET') return;
+  var url;
+  try { url = new URL(req.url); } catch (err) { return; }
+  // 같은 출처(내 앱 파일)만 캐시. 확장(chrome-extension)·Firebase·폰트 등 외부는 건드리지 않음.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+  if (url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then(function (cached) {
-      return cached || fetch(e.request).then(function (res) {
+    caches.match(req).then(function (cached) {
+      return cached || fetch(req).then(function (res) {
         var copy = res.clone();
-        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
         return res;
       }).catch(function () { return cached; });
     })
