@@ -50,9 +50,68 @@
     var w = weightKg > 0 ? weightKg : 65;
     return Math.max(0, Math.round(met * w * ((minutes || 0) / 60)));
   }
-  var WEIGHT_KEY = 'wchallenge:weight';
-  function getWeight() { var w = +(typeof localStorage !== 'undefined' && localStorage.getItem(WEIGHT_KEY)); return w > 0 ? w : 65; }
-  function setWeight(w) { try { localStorage.setItem(WEIGHT_KEY, String(Math.max(0, Math.round(w) || 0))); } catch (e) {} }
+  // 신체 정보(기기에 저장) — 소모 칼로리·기초대사량 계산에 사용
+  var BODY_KEY = 'wchallenge:body', WEIGHT_KEY = 'wchallenge:weight', WLOG_KEY = 'wchallenge:weightlog';
+  var BODY_DEFAULT = { weight: 65, height: 170, age: 30, sex: 'male' };
+  function ls(k) { try { return typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null; } catch (e) { return null; } }
+
+  // 날짜별 몸무게 기록 { 'YYYY-MM-DD': kg } — 몸무게는 매일 바뀌므로 날짜에 묶어 저장한다.
+  function getWeightLog() { var m = {}; try { m = JSON.parse(ls(WLOG_KEY) || '{}') || {}; } catch (e) { m = {}; } return m; }
+  function saveWeightLog(m) { try { localStorage.setItem(WLOG_KEY, JSON.stringify(m)); } catch (e) {} }
+  function logWeight(date, w) {
+    w = Math.max(0, Math.round(w) || 0);
+    var m = getWeightLog();
+    if (w > 0) { m[date] = w; saveWeightLog(m); }
+  }
+  // 그 날짜에 적용되는 몸무게: 당일 기록 → 없으면 그 이전의 가장 최근 기록 → 그것도 없으면 이후 첫 기록 → 최종 기본값
+  function weightOn(date) {
+    var m = getWeightLog();
+    if (m[date] > 0) return m[date];
+    var keys = Object.keys(m).filter(function (k) { return m[k] > 0; }).sort();
+    var prior = null, future = null;
+    for (var i = 0; i < keys.length; i++) { if (keys[i] <= date) prior = keys[i]; else { future = keys[i]; break; } }
+    if (prior) return m[prior];
+    if (future) return m[future];
+    var b0 = readBodyRaw(); return b0.weight > 0 ? b0.weight : BODY_DEFAULT.weight;
+  }
+
+  function readBodyRaw() {
+    var b = {};
+    try { b = JSON.parse(ls(BODY_KEY) || '{}') || {}; } catch (e) { b = {}; }
+    var legacy = +ls(WEIGHT_KEY); // 예전 단일 몸무게 저장분 승계
+    return {
+      weight: b.weight > 0 ? b.weight : (legacy > 0 ? legacy : BODY_DEFAULT.weight),
+      height: b.height > 0 ? b.height : BODY_DEFAULT.height,
+      age: b.age > 0 ? b.age : BODY_DEFAULT.age,
+      sex: b.sex === 'female' ? 'female' : 'male'
+    };
+  }
+  // 신체 정보. weight 는 "오늘 기준" 값(날짜별 기록에서 조회)
+  function getBody() {
+    var out = readBodyRaw();
+    out.weight = weightOn(today());
+    return out;
+  }
+  function setBody(patch) {
+    var b = readBodyRaw();
+    // 몸무게는 오늘 날짜의 기록으로 저장(과거 날짜 값은 그대로 보존)
+    if (patch.weight != null) { b.weight = Math.max(0, Math.round(patch.weight) || 0); logWeight(today(), b.weight); }
+    if (patch.height != null) b.height = Math.max(0, Math.round(patch.height) || 0);
+    if (patch.age != null) b.age = Math.max(0, Math.round(patch.age) || 0);
+    if (patch.sex != null) b.sex = patch.sex === 'female' ? 'female' : 'male';
+    try { localStorage.setItem(BODY_KEY, JSON.stringify(b)); } catch (e) {}
+    return getBody();
+  }
+  function getWeight() { return weightOn(today()); }
+  function setWeight(w) { setBody({ weight: w }); }
+  // 기초대사량(BMR) — Mifflin-St Jeor 공식(대략치)
+  function estimateBMR(body) {
+    var b = body || getBody();
+    var base = 10 * (b.weight || 0) + 6.25 * (b.height || 0) - 5 * (b.age || 0);
+    return Math.max(0, Math.round(base + (b.sex === 'female' ? -161 : 5)));
+  }
+  // 특정 날짜 기준 기초대사량 — 그 날의 몸무게를 적용
+  function estimateBMRon(date) { var b = readBodyRaw(); b.weight = weightOn(date); return estimateBMR(b); }
 
   /* ---------- 날짜 유틸 ---------- */
   function ymd(d) {
@@ -139,6 +198,11 @@
       if (!v) return Promise.resolve();
       if (this.raw.cheeredByMe[id]) { this.raw.cheeredByMe[id] = false; v.cheers = Math.max(0, v.cheers - 1); }
       else { this.raw.cheeredByMe[id] = true; v.cheers++; }
+      this._save(); this._emit(); return Promise.resolve();
+    },
+    deleteVerification: function (id) {
+      this.raw.verifications = this.raw.verifications.filter(function (v) { return v.id !== id; });
+      if (this.raw.cheeredByMe) delete this.raw.cheeredByMe[id];
       this._save(); this._emit(); return Promise.resolve();
     },
     reset: function () { this.raw = this._seed(); this._save(); this._emit(); return Promise.resolve(); },
@@ -397,6 +461,9 @@
       patch['cheers.' + self.pid] = mine ? self.fb.firestore.FieldValue.delete() : true;
       return ref.update(patch);
     },
+    deleteVerification: function (id) {
+      return this.db.collection('challenges').doc(this.room).collection('verifications').doc(id).delete();
+    },
     reset: function () { return Promise.resolve(); }, // 실서비스에선 초기화 없음
     inviteInfo: function () {
       var base = location.origin + location.pathname;
@@ -529,6 +596,8 @@
     MEAL_SLOTS: MEAL_SLOTS,
     slotLabel: slotLabel,
     estimateBurn: estimateBurn, getWeight: getWeight, setWeight: setWeight,
+    getBody: getBody, setBody: setBody, estimateBMR: estimateBMR,
+    weightOn: weightOn, logWeight: logWeight, estimateBMRon: estimateBMRon,
     ymd: ymd, today: today, addDays: addDays,
     init: function () { return impl.init(); },
     needsLogin: function () { return impl.needsLogin(); },
@@ -537,6 +606,7 @@
     onData: onData,
     saveChallenge: function (p) { return impl.saveChallenge(p); },
     saveVerification: function (p) { return impl.saveVerification(p); },
+    deleteVerification: function (id) { return impl.deleteVerification(id); },
     toggleCheer: function (id) { return impl.toggleCheer(id); },
     reset: function () { return impl.reset(); },
     inviteInfo: function () { return impl.inviteInfo(); },

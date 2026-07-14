@@ -121,6 +121,13 @@ body {
   box-shadow: 0 8px 20px -8px oklch(75% 0.16 25 / 0.6);
 }
 .btn-primary:active { transform: translateY(1px); }
+.home-cta {
+  display: block; width: 100%; margin: 0 0 20px; padding: 15px;
+  background: var(--primary); color: #fff; border: none; border-radius: 16px;
+  font-family: var(--font-body); font-weight: 700; font-size: 16px; cursor: pointer;
+  box-shadow: 0 8px 20px -8px oklch(75% 0.16 25 / 0.6);
+}
+.home-cta:active { transform: translateY(1px); }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 8px 0 4px; }
 .topbar .back { font-size: 22px; cursor: pointer; background: none; border: none; color: var(--ink); }
 .topbar .topbar-title { font-family: var(--font-head); font-size: 19px; color: var(--ink); }
@@ -202,6 +209,60 @@ body {
   font-size: 18px; font-weight: 800; color: oklch(40% 0.13 55); font-family: var(--font-body); background: #fff; }
 .kcal-input-row .kie-unit { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
 
+/* 음식 항목 직접 수정(이름·칼로리) */
+.kcal-food .kf-name-in { flex: 1; min-width: 0; padding: 7px 9px; border: 1.5px solid oklch(90% 0.02 60); border-radius: 8px;
+  font-size: 13px; color: var(--ink); font-family: var(--font-body); background: #fff; }
+.kcal-food .kf-cal-wrap { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+.kcal-food .kf-cal-in { width: 62px; padding: 7px 6px; border: 1.5px solid oklch(90% 0.02 60); border-radius: 8px;
+  font-size: 13px; font-weight: 700; color: var(--ink); text-align: right; font-family: var(--font-body); background: #fff; }
+.kcal-food .kf-unit { font-size: 11px; color: var(--ink-mute); }
+.kcal-food .kf-name-in:focus, .kcal-food .kf-cal-in:focus { outline: none; border-color: var(--primary); }
+.kf-add { margin-top: 8px; width: 100%; padding: 9px; border: 1.5px dashed oklch(85% 0.03 60); border-radius: 10px;
+  background: transparent; color: var(--ink-soft); font-weight: 700; font-size: 13px; cursor: pointer; font-family: var(--font-body); }
+.kcal-sumline { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.kcal-sumline b { font-size: 20px; color: oklch(40% 0.13 55); margin: 0 3px; }
+
+/* 에너지 요약(섭취·소모·기초대사량·순) */
+.energy-card { margin-top: 12px; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.energy-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.energy-cell { flex: 1; text-align: center; }
+.energy-cell .ec-val { font-size: 20px; font-weight: 800; line-height: 1.1; }
+.energy-cell .ec-label { font-size: 11px; color: var(--ink-mute); margin-top: 3px; }
+.energy-cell.in .ec-val { color: oklch(45% 0.13 55); }
+.energy-cell.burn .ec-val { color: var(--primary-d); }
+.energy-cell.bmr .ec-val { color: oklch(50% 0.1 250); }
+.energy-op { font-size: 16px; font-weight: 800; color: var(--ink-mute); }
+.energy-net { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 8px; }
+.energy-net .en-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.energy-net b { font-size: 20px; }
+.energy-net.plus b { color: var(--primary-d); }
+.energy-net.minus b { color: var(--green); }
+.energy-net .en-tip { margin-left: auto; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 100px; }
+.energy-net.plus .en-tip { background: var(--primary-bg); color: var(--primary-d); }
+.energy-net.minus .en-tip { background: var(--green-bg); color: var(--green); }
+.energy-hint { font-size: 11px; color: var(--ink-mute); margin-top: 8px; line-height: 1.5; }
+.energy-weight { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: flex; align-items: center; gap: 8px; }
+.energy-weight .ew-label { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.energy-weight .w-day-in { width: 70px; padding: 7px 9px; border: 1.5px solid oklch(88% 0.03 60); border-radius: 10px;
+  font-size: 15px; font-weight: 700; color: var(--ink); text-align: right; font-family: var(--font-body); background: #fff; }
+.energy-weight .w-day-in:focus { outline: none; border-color: var(--primary); }
+.energy-weight .ew-unit { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.energy-weight .ew-note { font-size: 11px; color: var(--ink-mute); margin-left: auto; }
+
+/* 신체 정보 카드 */
+.body-card { padding: 16px 18px; margin-top: 14px; }
+.body-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 14px; margin-top: 4px; margin-bottom: 12px; }
+.body-field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-mute); margin-bottom: 6px; }
+.body-in-row { display: flex; align-items: center; gap: 6px; height: 40px; }
+.body-in { flex: 1; min-width: 0; height: 100%; padding: 0 12px; border: 1.5px solid oklch(90% 0.02 60); border-radius: 11px;
+  font-size: 15px; font-weight: 700; color: var(--ink); font-family: var(--font-body); background: var(--field); }
+.body-in:focus { outline: none; border-color: var(--primary); background: #fff; }
+.body-unit { font-size: 13px; font-weight: 600; color: var(--ink-mute); }
+.sex-seg { display: flex; gap: 6px; height: 40px; }
+.sex-btn { flex: 1; border: 1.5px solid oklch(90% 0.02 60); border-radius: 11px; background: var(--field);
+  color: var(--ink-soft); font-weight: 700; font-size: 14px; cursor: pointer; font-family: var(--font-body); }
+.sex-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
 /* 운동/식단 전환 토글 */
 .cat-toggle { display: flex; gap: 8px; background: var(--field); padding: 5px; border-radius: 14px; }
 .cat-btn { flex: 1; padding: 11px; border: none; border-radius: 10px; background: transparent; cursor: pointer;
@@ -212,6 +273,8 @@ body {
 .fb-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
 .fb-actions .cheer-btn { margin-top: 0; }
 .edit-btn { background: var(--field); color: var(--ink-soft); font-size: 12px; font-weight: 700;
+  padding: 6px 12px; border-radius: 100px; border: none; cursor: pointer; font-family: var(--font-body); }
+.del-btn { background: var(--primary-bg); color: var(--primary-d); font-size: 12px; font-weight: 700;
   padding: 6px 12px; border-radius: 100px; border: none; cursor: pointer; font-family: var(--font-body); }
 .kcal-sum { font-size: 12px; font-weight: 800; color: oklch(45% 0.12 60); }
 
@@ -237,7 +300,8 @@ body {
 .ms-cal { font-weight: 800; font-size: 13px; color: oklch(45% 0.12 60); white-space: nowrap; }
 .ms-none { font-size: 12px; color: var(--ink-mute); }
 .ms-foods { font-size: 12px; color: var(--ink-soft); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-edit { border: none; background: transparent; font-size: 16px; cursor: pointer; flex-shrink: 0; padding: 4px; }
+.ms-tools { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.ms-edit, .ms-del { border: none; background: transparent; font-size: 16px; cursor: pointer; padding: 4px; }
 .ms-add { border: none; background: var(--primary-bg); color: var(--primary-d); font-weight: 700; font-size: 12px;
   padding: 7px 12px; border-radius: 100px; cursor: pointer; font-family: var(--font-body); flex-shrink: 0; }
 

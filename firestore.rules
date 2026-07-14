@@ -33,13 +33,13 @@ service cloud.firestore {
       allow delete: if isAdmin();              // 방 삭제는 관리자만
 
       // 인증 기록. 신원(uid 필드)은 "닉네임 기반 키"라 서버(규칙)에서 auth.uid 와 대조 불가.
-      // → 방 코드를 아는(=로그인한) 참여자면 인증 생성/수정 허용. 삭제는 관리자만.
-      // (친구용 앱: 익명 인증 특성상 방 코드가 실질적 접근 통제 역할)
+      // → 방 코드를 아는(=로그인한) 참여자면 인증 생성/수정/삭제 허용.
+      // (친구용 앱: 익명 인증 특성상 방 코드가 실질적 접근 통제 역할. UI에선 본인 기록만 삭제 노출)
       match /verifications/{vid} {
         allow get, list: if request.auth != null;
         allow create: if request.auth != null;
         allow update: if request.auth != null; // 본인 인증 수정 + 응원(cheers) 포함
-        allow delete: if isAdmin();
+        allow delete: if request.auth != null; // 본인 인증 삭제(+ 관리자 정리)
       }
     }
   }

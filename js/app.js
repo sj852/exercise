@@ -150,8 +150,12 @@
 
     var recent = workoutVerifs().slice().sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }).slice(0, 15);
 
+    // 바로 운동 인증으로 넘어가는 버튼
+    var verifyCta = h('button', { class: 'home-cta', onclick: function () { draft = freshDraft(); draft.category = 'workout'; navTo('verify'); } },
+      [doneToday ? '💪 운동 한 번 더 인증하기' : '🔥 운동 인증하기']);
+
     return h('div', { class: 'screen' }, [
-      header, reminder, challengeCard,
+      header, reminder, challengeCard, verifyCta,
       h('div', { class: 'section-label' }, ['친구들 운동 인증 피드']),
       recent.length ? h('div', { class: 'feed' }, recent.map(feedCard)) : h('div', { class: 'empty' }, ['아직 운동 인증이 없어요. 첫 인증을 남겨보세요! 📸'])
     ]);
@@ -178,10 +182,17 @@
         v.message ? h('div', { class: 'fb-msg' }, [v.message]) : null,
         h('div', { class: 'fb-actions' }, [
           h('button', { class: 'cheer-btn' + (v.cheeredByMe ? ' cheered' : ''), onclick: function () { DB.toggleCheer(v.id); } }, ['👏 응원 ' + v.cheers]),
-          v.userId === ME() ? h('button', { class: 'edit-btn', onclick: function () { editVerification(v); } }, ['✏️ 수정']) : null
+          v.userId === ME() ? h('button', { class: 'edit-btn', onclick: function () { editVerification(v); } }, ['✏️ 수정']) : null,
+          v.userId === ME() ? h('button', { class: 'del-btn', onclick: function () { removeVerification(v); } }, ['🗑 삭제']) : null
         ])
       ])
     ]);
+  }
+  // 인증 삭제 (본인 것만 UI에 노출). onData 리스너가 자동 재렌더
+  function removeVerification(v) {
+    if (!confirm(isMeal(v) ? '이 식단 기록을 삭제할까요?' : '이 운동 인증을 삭제할까요?')) return;
+    DB.deleteVerification(v.id).then(function () { toast('삭제됐어요'); })
+      .catch(function (e) { console.error(e); toast('삭제 실패: ' + (e && e.message || '')); });
   }
   // 기존 인증을 수정: 값을 draft 로 불러와 인증 화면으로 이동 (같은 끼니/운동은 덮어쓰기됨)
   function editVerification(v) {
@@ -266,32 +277,47 @@
       kids.push(h('button', { class: 'analyze-btn' + (configured && draft.photo ? '' : ' disabled'), onclick: analyzeCalories },
         [draft.kcal != null ? '↻ 사진으로 다시 분석' : '🍽 사진으로 AI 칼로리 분석']));
     }
-    // 인식된 음식 목록 (각 항목 제거 가능)
-    if (draft.foods && draft.foods.length) {
+    var hasFoods = !!(draft.foods && draft.foods.length);
+    // 음식 목록 — 이름/칼로리 모두 직접 수정, 항목 제거 가능
+    if (hasFoods) {
+      var sumSpan = h('b', {}, [foodSum().toLocaleString()]);
       kids.push(h('div', { class: 'kcal-foods' }, draft.foods.map(function (f, i) {
+        var nameIn = h('input', { class: 'kf-name-in', placeholder: '음식 이름', value: f.name || '' });
+        nameIn.addEventListener('input', function () { f.name = nameIn.value; });
+        var calIn = h('input', { type: 'number', class: 'kf-cal-in', min: '0', inputmode: 'numeric', value: f.kcal != null ? String(f.kcal) : '' });
+        // 칼로리 편집 시 총합을 즉시 갱신(재렌더 없이) — 커서 튐 방지
+        calIn.addEventListener('input', function () { f.kcal = Math.max(0, Math.round(+calIn.value) || 0); draft.kcal = foodSum(); sumSpan.textContent = draft.kcal.toLocaleString(); });
         return h('div', { class: 'kcal-food' }, [
-          h('span', { class: 'kf-name' }, [f.name]),
-          h('span', { class: 'kf-cal' }, [f.kcal + ' kcal']),
+          nameIn,
+          h('div', { class: 'kf-cal-wrap' }, [calIn, h('span', { class: 'kf-unit' }, ['kcal'])]),
           h('button', { class: 'kf-x', title: '제거', onclick: function () { removeFood(i); } }, ['✕'])
         ]);
       })));
+      kids.push(h('button', { class: 'kf-add', onclick: function () { draft.foods.push({ name: '', kcal: 0 }); render(); } }, ['+ 음식 추가']));
+      kids.push(h('div', { class: 'kcal-total-edit' }, [
+        h('div', { class: 'kcal-sumline' }, ['총 칼로리 ', sumSpan, ' kcal']),
+        h('div', { class: 'kcal-hint' }, ['AI 추정치는 오차가 있어요. 음식 이름·칼로리를 직접 고치거나 지울 수 있어요.'])
+      ]));
+    } else {
+      // 음식 목록이 없을 때 — 총 칼로리 직접 입력 + 항목 추가
+      var totalInput = h('input', { type: 'number', class: 'kcal-input', min: '0', inputmode: 'numeric', placeholder: '예: 650', value: draft.kcal != null ? String(draft.kcal) : '' });
+      totalInput.addEventListener('input', function () { var val = totalInput.value.trim(); draft.kcal = val === '' ? null : Math.max(0, Math.round(+val) || 0); });
+      kids.push(h('div', { class: 'kcal-total-edit' }, [
+        h('div', { class: 'kcal-input-row' }, [h('span', { class: 'kie-label' }, ['총 칼로리']), totalInput, h('span', { class: 'kie-unit' }, ['kcal'])]),
+        h('button', { class: 'kf-add', onclick: function () { draft.foods = [{ name: '', kcal: draft.kcal || 0 }]; render(); } }, ['+ 음식별로 나눠 입력']),
+        h('div', { class: 'kcal-hint' }, [configured
+          ? 'AI 추정치는 오차가 있어요. 숫자를 직접 고치거나 음식별로 나눠 입력할 수 있어요.'
+          : '분석 서버 미설정 — 칼로리를 직접 입력하세요. (설정법은 README 참고)'])
+      ]));
     }
-    // 총 칼로리 직접 입력/수정
-    var totalInput = h('input', { type: 'number', class: 'kcal-input', min: '0', inputmode: 'numeric', placeholder: '예: 650', value: draft.kcal != null ? String(draft.kcal) : '' });
-    totalInput.addEventListener('input', function () { var val = totalInput.value.trim(); draft.kcal = val === '' ? null : Math.max(0, Math.round(+val) || 0); });
-    kids.push(h('div', { class: 'kcal-total-edit' }, [
-      h('div', { class: 'kcal-input-row' }, [h('span', { class: 'kie-label' }, ['총 칼로리']), totalInput, h('span', { class: 'kie-unit' }, ['kcal'])]),
-      h('div', { class: 'kcal-hint' }, [configured
-        ? 'AI 추정치는 오차가 있어요. 숫자를 직접 고치거나 음식을 지울 수 있어요.'
-        : '분석 서버 미설정 — 칼로리를 직접 입력하세요. (설정법은 README 참고)'])
-    ]));
     return h('div', {}, kids);
   }
+  function foodSum() { return (draft.foods || []).reduce(function (a, f) { return a + (f.kcal || 0); }, 0); }
   function removeFood(i) {
     if (!draft.foods) return;
-    var f = draft.foods[i];
     draft.foods = draft.foods.filter(function (_, j) { return j !== i; });
-    if (f && draft.kcal != null) draft.kcal = Math.max(0, draft.kcal - (f.kcal || 0));
+    // 음식 목록이 남아 있으면 총합으로 동기화, 다 지우면 kcal 유지(직접입력 모드로 복귀)
+    if (draft.foods.length) draft.kcal = foodSum();
     render();
   }
   function analyzeCalories() {
@@ -301,8 +327,9 @@
     draft.analyzing = true; render();
     DB.estimateCalories(draft.photo).then(function (res) {
       draft.analyzing = false;
-      draft.kcal = res.totalKcal;
       draft.foods = res.foods;
+      // 음식이 인식되면 총 칼로리는 항목 합계로 맞춤(표시와 저장값 일치)
+      draft.kcal = res.foods && res.foods.length ? foodSum() : res.totalKcal;
       if (!res.foods.length && res.note) toast(res.note);
       render();
     }).catch(function (e) {
@@ -383,6 +410,8 @@
   function dateLabel(d) { var dt = new Date(d + 'T00:00:00'); return (dt.getMonth() + 1) + '월 ' + dt.getDate() + '일 (' + WEEK[dt.getDay()] + ')'; }
   function mealsOn(uid, d) { return mealVerifs().filter(function (v) { return v.userId === uid && v.date === d; }); }
   function kcalOn(uid, d) { return mealsOn(uid, d).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
+  function burnOn(uid, d) { return workoutVerifs().filter(function (v) { return v.userId === uid && v.date === d; }).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
+  function energyCell(label, val, cls) { return h('div', { class: 'energy-cell ' + cls }, [h('div', { class: 'ec-val' }, [val.toLocaleString()]), h('div', { class: 'ec-label' }, [label])]); }
 
   screens.meals = function () {
     var d = mealState.date, isToday = d === today();
@@ -417,7 +446,10 @@
             h('div', { class: 'ms-top' }, [h('span', { class: 'ms-slot' }, [s.label]), h('span', { class: 'ms-cal' }, [entry.kcal != null ? entry.kcal.toLocaleString() + ' kcal' : '-'])]),
             h('div', { class: 'ms-foods' }, [entry.foods && entry.foods.length ? entry.foods.map(function (f) { return f.name; }).join(', ') : (entry.message || '기록됨')])
           ]),
-          canEdit ? h('button', { class: 'ms-edit', title: '수정', onclick: function () { editVerification(entry); } }, ['✏️']) : null
+          canEdit ? h('div', { class: 'ms-tools' }, [
+            h('button', { class: 'ms-edit', title: '수정', onclick: function () { editVerification(entry); } }, ['✏️']),
+            h('button', { class: 'ms-del', title: '삭제', onclick: function () { removeVerification(entry); } }, ['🗑'])
+          ]) : null
         ]);
       }
       return h('div', { class: 'meal-slot empty' }, [
@@ -427,11 +459,56 @@
       ]);
     });
 
+    // 에너지 요약(섭취·소모·기초대사량·순) — 기초대사량은 내 신체정보 기반이라 나에게만 표시
+    var burn = burnOn(viewUid, d);
+    var energyCard;
+    if (mine) {
+      // 기초대사량은 "그 날의 몸무게"로 계산 — 날짜가 바뀌면 그 날 기록된 몸무게가 적용됨
+      var wUsed = DB.weightOn(d);
+      var bmr = DB.estimateBMRon(d);
+      var net = dayTotal - burn - bmr; // 순 = 섭취 − 운동소모 − 기초대사량
+      // 값 갱신용 노드 참조(몸무게를 바꾸면 재렌더 없이 즉시 반영)
+      var bmrVal = h('div', { class: 'ec-val' }, [bmr.toLocaleString()]);
+      var bmrCell = h('div', { class: 'energy-cell bmr' }, [bmrVal, h('div', { class: 'ec-label' }, ['기초대사량'])]);
+      var netB = h('b', {}, [(net > 0 ? '+' : '') + net.toLocaleString() + ' kcal']);
+      var netTip = h('span', { class: 'en-tip' }, [net > 0 ? '섭취 초과' : '소모 우위']);
+      var netRow = h('div', { class: 'energy-net ' + (net > 0 ? 'plus' : 'minus') }, [h('span', { class: 'en-label' }, ['순 칼로리']), netB, netTip]);
+      function refreshEnergy() {
+        var nb = DB.estimateBMRon(d), nn = dayTotal - burn - nb;
+        bmrVal.textContent = nb.toLocaleString();
+        netB.textContent = (nn > 0 ? '+' : '') + nn.toLocaleString() + ' kcal';
+        netTip.textContent = nn > 0 ? '섭취 초과' : '소모 우위';
+        netRow.className = 'energy-net ' + (nn > 0 ? 'plus' : 'minus');
+      }
+      var footer;
+      if (canEdit) {
+        // 오늘은 몸무게를 이 날짜에 기록 — 과거 날짜 값은 그대로 보존됨
+        var wIn = h('input', { type: 'number', class: 'w-day-in', inputmode: 'numeric', min: '20', max: '250', value: String(wUsed) });
+        wIn.addEventListener('input', function () { var w = +wIn.value || 0; if (w > 0) DB.logWeight(d, w); refreshEnergy(); });
+        footer = h('div', { class: 'energy-weight' }, [h('span', { class: 'ew-label' }, ['오늘 몸무게']), wIn, h('span', { class: 'ew-unit' }, ['kg']), h('span', { class: 'ew-note' }, ['(이 날 기준으로 저장)'])]);
+      } else {
+        footer = h('div', { class: 'energy-hint' }, ['이 날 몸무게 ' + wUsed.toLocaleString() + 'kg 기준 · 기초대사량은 신체정보로 대략 계산돼요.']);
+      }
+      energyCard = h('div', { class: 'energy-card' }, [
+        h('div', { class: 'energy-row' }, [
+          energyCell('섭취', dayTotal, 'in'),
+          h('span', { class: 'energy-op' }, ['−']),
+          energyCell('운동 소모', burn, 'burn'),
+          h('span', { class: 'energy-op' }, ['−']),
+          bmrCell
+        ]),
+        netRow,
+        footer
+      ]);
+    } else {
+      energyCard = h('div', { class: 'meal-daytotal' }, [person(viewUid).name + ' 섭취 ', h('b', {}, [dayTotal.toLocaleString()]), ' kcal · 운동 소모 ', h('b', {}, [burn.toLocaleString()]), ' kcal']);
+    }
+
     return h('div', { class: 'screen' }, [
       h('div', { style: 'padding:8px 0 4px' }, [h('div', { class: 'h-title' }, ['식단 기록 🍽️'])]),
       nav,
       totals,
-      h('div', { class: 'meal-daytotal' }, [(mine ? '내' : person(viewUid).name) + ' 섭취 ', h('b', {}, [dayTotal.toLocaleString()]), ' kcal']),
+      energyCard,
       h('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' }, slotRows)
     ]);
   };
@@ -497,6 +574,32 @@
   /* =====================================================================
      화면 6 · 내 정보 · 통계
      ===================================================================== */
+  // 신체 정보 카드 — 기기에 저장(다음에도 유지), 소모 칼로리·기초대사량 계산에 사용
+  function bodyCard() {
+    var b = DB.getBody();
+    var bmrSpan = h('b', {}, [DB.estimateBMR(b).toLocaleString()]);
+    function sync() { b = DB.getBody(); bmrSpan.textContent = DB.estimateBMR(b).toLocaleString(); }
+    function numField(label, key, unit, min, max) {
+      var inp = h('input', { type: 'number', class: 'body-in', inputmode: 'numeric', min: String(min), max: String(max), value: String(b[key]) });
+      inp.addEventListener('input', function () { var patch = {}; patch[key] = +inp.value || 0; DB.setBody(patch); sync(); });
+      return h('div', { class: 'body-field' }, [h('label', {}, [label]), h('div', { class: 'body-in-row' }, [inp, h('span', { class: 'body-unit' }, [unit])])]);
+    }
+    var sexSeg = h('div', { class: 'sex-seg' }, [
+      h('button', { class: 'sex-btn' + (b.sex === 'male' ? ' active' : ''), onclick: function () { DB.setBody({ sex: 'male' }); render(); } }, ['남']),
+      h('button', { class: 'sex-btn' + (b.sex === 'female' ? ' active' : ''), onclick: function () { DB.setBody({ sex: 'female' }); render(); } }, ['여'])
+    ]);
+    return h('div', { class: 'card body-card' }, [
+      h('div', { class: 'chart-head' }, [h('div', { class: 'ch-title' }, ['내 신체 정보']), h('div', { class: 'ch-avg' }, ['기초대사량 약 ', bmrSpan, ' kcal'])]),
+      h('div', { class: 'body-grid' }, [
+        numField('몸무게', 'weight', 'kg', 20, 250),
+        numField('키', 'height', 'cm', 100, 250),
+        numField('나이', 'age', '세', 5, 120),
+        h('div', { class: 'body-field' }, [h('label', {}, ['성별']), sexSeg])
+      ]),
+      h('div', { class: 'kcal-hint', style: 'margin-top:2px' }, ['몸무게는 오늘 날짜로 기록돼요(매일 바뀌어도 그 날 값이 그 날 기초대사량에 적용). 키·나이·성별은 계속 유지돼요.'])
+    ]);
+  }
+
   screens.profile = function () {
     var weeks = [];
     for (var w = 3; w >= 0; w--) { var cnt = 0; for (var day = 0; day < 7; day++) { if (didVerify(ME(), addDays(today(), -(w * 7 + day)))) cnt++; } weeks.push(Math.round((cnt / 7) * 100)); }
@@ -519,6 +622,7 @@
         h('div', { class: 'chart-head' }, [h('div', { class: 'ch-title' }, ['최근 4주 인증률']), h('div', { class: 'ch-avg' }, ['평균 ' + avg + '%'])]),
         h('div', { class: 'bars' }, bars)
       ]),
+      bodyCard(),
       h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px' }, [
         h('div', { class: 'section-label', style: 'margin:0' }, ['챌린지']),
         h('button', { class: 'chip', style: 'padding:6px 12px', onclick: function () { navTo('setup'); } }, ['⚙️ 설정'])
