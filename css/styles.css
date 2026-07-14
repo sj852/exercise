@@ -443,6 +443,17 @@ body {
 .admin-danger { width: 100%; background: var(--field); color: oklch(50% 0.14 25); border: 1px solid oklch(88% 0.05 25); border-radius: 14px; padding: 13px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: var(--font-body); }
 .admin-danger.strong { background: oklch(60% 0.18 25); color: #fff; border: none; }
 
+/* 관리자: 개별 인증 기록 목록 */
+.admin-verifs { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.admin-verif { display: flex; align-items: center; gap: 10px; background: var(--field); border-radius: 12px; padding: 10px 12px; }
+.admin-verif .av-body { flex: 1; min-width: 0; }
+.admin-verif .av-top { display: flex; align-items: baseline; gap: 8px; }
+.admin-verif .av-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.admin-verif .av-date { font-size: 11px; color: var(--ink-mute); }
+.admin-verif .av-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.admin-verif .av-del { border: none; background: var(--primary-bg); color: var(--primary-d); font-size: 15px;
+  border-radius: 10px; padding: 6px 9px; cursor: pointer; flex-shrink: 0; }
+
 
 /* ===== 토스트 ===== */
 .toast {

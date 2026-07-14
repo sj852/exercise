@@ -239,6 +239,18 @@
       });
       return Promise.resolve({ code: '(데모방)', challenge: raw.challenge, participants: participants, verifCount: raw.verifications.length });
     },
+    adminListVerifs: function () {
+      var raw = this.raw;
+      return Promise.resolve(raw.verifications.map(function (v) {
+        var cat = v.category || (v.type === '식단' ? 'meal' : 'workout');
+        return { id: v.id, uid: v.userId, name: raw.names[v.userId] || v.userId, date: v.date, category: cat, slot: v.slot || null, type: v.type || null, kcal: v.kcal != null ? v.kcal : null, createdAtMs: 0 };
+      }).sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); }));
+    },
+    adminDeleteVerification: function (code, id) {
+      this.raw.verifications = this.raw.verifications.filter(function (v) { return v.id !== id; });
+      if (this.raw.cheeredByMe) delete this.raw.cheeredByMe[id];
+      this._save(); this._emit(); return Promise.resolve();
+    },
     adminResetVerifs: function () { this.raw.verifications = []; this.raw.cheeredByMe = {}; this._save(); this._emit(); return Promise.resolve(); },
     adminDeleteRoom: function () { this.raw = this._seed(); this._save(); this._emit(); return Promise.resolve(); },
     adminRemoveParticipant: function (code, uid) {
@@ -505,7 +517,7 @@
       var pre = self.uid ? Promise.resolve() : self.auth.signInAnonymously().then(function (c) { self.uid = c.user.uid; });
       return pre.then(function () {
         return self.db.collection('admins').doc(self.uid).set({ code: password, since: Date.now() });
-      }).then(function () { self.isAdmin = true; return true; });
+      }).then(function () { self.isAdmin = true; self._emit(); return true; });
     },
     adminListRooms: function () {
       return this.db.collection('challenges').get().then(function (snap) {
@@ -526,6 +538,18 @@
           return { code: code, challenge: data, participants: participants, verifCount: vs.size };
         });
       });
+    },
+    adminListVerifs: function (code) {
+      var ref = this.db.collection('challenges').doc(code).collection('verifications');
+      return ref.get().then(function (vs) {
+        return vs.docs.map(function (v) {
+          var dd = v.data(), cat = dd.category || (dd.type === '식단' ? 'meal' : 'workout');
+          return { id: v.id, uid: dd.uid, name: dd.name || dd.uid, date: dd.date, category: cat, slot: dd.slot || null, type: dd.type || null, kcal: dd.kcal != null ? dd.kcal : null, createdAtMs: dd.createdAtMs || 0 };
+        }).sort(function (a, b) { return (b.date || '').localeCompare(a.date || '') || (b.createdAtMs - a.createdAtMs); });
+      });
+    },
+    adminDeleteVerification: function (code, id) {
+      return this.db.collection('challenges').doc(code).collection('verifications').doc(id).delete();
     },
     adminResetVerifs: function (code) {
       var self = this, ref = this.db.collection('challenges').doc(code);
@@ -613,6 +637,8 @@
     adminAuthenticate: function (pw) { return impl.adminAuthenticate(pw); },
     adminListRooms: function () { return impl.adminListRooms(); },
     adminRoomDetail: function (code) { return impl.adminRoomDetail(code); },
+    adminListVerifs: function (code) { return impl.adminListVerifs(code); },
+    adminDeleteVerification: function (code, id) { return impl.adminDeleteVerification(code, id); },
     adminResetVerifs: function (code) { return impl.adminResetVerifs(code); },
     adminDeleteRoom: function (code) { return impl.adminDeleteRoom(code); },
     adminRemoveParticipant: function (code, uid) { return impl.adminRemoveParticipant(code, uid); },

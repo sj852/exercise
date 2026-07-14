@@ -85,6 +85,43 @@
   function loadDetail(code) {
     DB.adminRoomDetail(code).then(function (d) { if (state.detail && state.detail.code === code) { state.detail.data = d; render(); } })
       .catch(function (e) { console.error(e); toast('상세 로드 실패: ' + (e && e.message || '')); });
+    DB.adminListVerifs(code).then(function (list) { if (state.detail && state.detail.code === code) { state.detail.verifs = list; render(); } })
+      .catch(function (e) { console.error(e); toast('인증 기록 로드 실패: ' + (e && e.message || '')); });
+  }
+  // 방 안의 개별 인증(운동/식단) 기록 목록 + 삭제
+  function verifSection(det) {
+    var list = det.verifs, filter = det.filter || 'all';
+    var chips = [['all', '전체'], ['workout', '🏋️ 운동'], ['meal', '🍽 식단']].map(function (f) {
+      return h('button', { class: 'chip' + (filter === f[0] ? ' active' : ''), style: 'padding:6px 12px', onclick: function () { det.filter = f[0]; render(); } }, [f[1]]);
+    });
+    var inner;
+    if (!list) inner = h('div', { class: 'empty', style: 'padding:12px' }, ['기록 불러오는 중…']);
+    else {
+      var shown = list.filter(function (v) { return filter === 'all' || v.category === filter; });
+      if (!shown.length) inner = h('div', { class: 'empty', style: 'padding:12px' }, ['해당 기록 없음']);
+      else inner = h('div', { class: 'admin-verifs' }, shown.map(function (v) {
+        var mealV = v.category === 'meal';
+        var label = mealV ? ('🍽 ' + DB.slotLabel(v.slot)) : ('🏋️ ' + (v.type || '운동'));
+        return h('div', { class: 'admin-verif' }, [
+          h('div', { class: 'av-body' }, [
+            h('div', { class: 'av-top' }, [h('span', { class: 'av-name' }, [v.name]), h('span', { class: 'av-date' }, [v.date || '-'])]),
+            h('div', { class: 'av-sub' }, [label + (v.kcal != null ? ' · ' + v.kcal.toLocaleString() + ' kcal' : '')])
+          ]),
+          h('button', { class: 'av-del', title: '삭제', onclick: function () {
+            if (!confirm(v.name + '님의 ' + (v.date || '') + ' ' + label + ' 기록을 삭제할까요?')) return;
+            DB.adminDeleteVerification(det.code, v.id).then(function () { loadDetail(det.code); toast('삭제됨'); })
+              .catch(function (e) { console.error(e); toast('삭제 실패: ' + (e && e.message || '')); });
+          } }, ['🗑'])
+        ]);
+      }));
+    }
+    return h('div', {}, [
+      h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin:2px 0 8px' }, [
+        h('div', { class: 'field-label', style: 'margin:0' }, ['인증 기록 (개별 삭제)']),
+        h('div', { class: 'chips', style: 'gap:6px' }, chips)
+      ]),
+      inner
+    ]);
   }
   function detailScreen() {
     var det = state.detail, d = det.data, body;
@@ -106,6 +143,7 @@
         ]),
         h('div', { class: 'field-label' }, ['참여자']),
         d.participants.length ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, partRows) : h('div', { class: 'empty', style: 'padding:12px' }, ['참여자 없음']),
+        h('div', { style: 'margin-top:20px' }, [verifSection(det)]),
         h('div', { style: 'margin-top:22px;display:flex;flex-direction:column;gap:10px' }, [
           h('button', { class: 'admin-danger', onclick: function () {
             if (confirm('이 방의 인증 기록을 전부 삭제할까요? (참여자·설정은 유지)')) DB.adminResetVerifs(det.code).then(function () { loadDetail(det.code); toast('인증 기록 초기화됨'); });
