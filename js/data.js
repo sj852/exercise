@@ -33,7 +33,7 @@
     'oklch(80% 0.14 60)',  // 주황
     'oklch(75% 0.13 330)'  // 핑크
   ];
-  var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산', '줄넘기'];
+  var EXERCISE_TYPES = ['웨이트', '러닝', '홈트', '요가', '수영', '자전거', '등산', '줄넘기', '만보 걷기'];
   // 식단 끼니 구분
   var MEAL_SLOTS = [
     { key: 'breakfast', label: '아침' },
@@ -44,7 +44,7 @@
   function slotLabel(key) { for (var i = 0; i < MEAL_SLOTS.length; i++) if (MEAL_SLOTS[i].key === key) return MEAL_SLOTS[i].label; return '식사'; }
 
   // 운동별 MET(활동대사량). 소모 kcal ≈ MET × 체중(kg) × 시간(h)
-  var MET = { '웨이트': 5, '러닝': 9.5, '홈트': 5, '요가': 3, '수영': 7, '자전거': 7, '등산': 6.5, '줄넘기': 11 };
+  var MET = { '웨이트': 5, '러닝': 9.5, '홈트': 5, '요가': 3, '수영': 7, '자전거': 7, '등산': 6.5, '줄넘기': 11, '만보 걷기': 3.5 };
   function estimateBurn(type, minutes, weightKg) {
     var met = MET[type] || 4;
     var w = weightKg > 0 ? weightKg : 65;
@@ -176,20 +176,28 @@
       this._save(); this._emit(); return Promise.resolve();
     },
     saveVerification: function (payload) {
-      var cat = payload.category || 'workout';
-      var slot = payload.slot || null;
-      // 운동은 (나,오늘) 1건, 식단은 (나,오늘,끼니) 1건으로 중복 없이 갱신
-      var existing = this.raw.verifications.find(function (v) {
-        if (v.userId !== 'me' || v.date !== today()) return false;
-        var vcat = v.category || (v.type === '식단' ? 'meal' : 'workout');
-        if (vcat !== cat) return false;
-        if (cat === 'meal') return (v.slot || null) === slot;
-        return true;
-      });
-      if (existing) { Object.assign(existing, payload); existing.createdAt = new Date().toISOString(); }
+      var editId = payload.id;
+      var fields = Object.assign({}, payload); delete fields.id;   // id 는 저장 필드가 아님(대상 지정용)
+      var cat = fields.category || 'workout';
+      var slot = fields.slot || null;
+      var dateStr = fields.date || today();                         // 과거 날짜 인증도 허용
+      var existing = null;
+      if (editId != null) {
+        // 수정: 지정한 기록만 갱신
+        existing = this.raw.verifications.find(function (v) { return v.id === editId && v.userId === 'me'; });
+      } else if (cat === 'meal') {
+        // 식단은 (나,그날,끼니) 1건 유지
+        existing = this.raw.verifications.find(function (v) {
+          if (v.userId !== 'me' || v.date !== dateStr) return false;
+          var vcat = v.category || (v.type === '식단' ? 'meal' : 'workout');
+          return vcat === 'meal' && (v.slot || null) === slot;
+        });
+      }
+      // 운동은 editId 없으면 항상 새 기록 → 하루에 여러 번 누적
+      if (existing) { Object.assign(existing, fields); existing.createdAt = new Date().toISOString(); }
       else {
         var maxId = this.raw.verifications.reduce(function (m, v) { return Math.max(m, v.id); }, 0);
-        this.raw.verifications.push(Object.assign({ id: maxId + 1, userId: 'me', date: today(), createdAt: new Date().toISOString(), cheers: 0 }, payload));
+        this.raw.verifications.push(Object.assign({ id: maxId + 1, userId: 'me', date: dateStr, createdAt: new Date().toISOString(), cheers: 0 }, fields));
       }
       this._save(); this._emit(); return Promise.resolve();
     },
@@ -431,38 +439,56 @@
       var self = this;
       var col = self.db.collection('challenges').doc(self.room).collection('verifications');
       var name = self.session.name;
+      var editId = payload.id;
       var cat = payload.category || 'workout';
       var slot = cat === 'meal' ? (payload.slot || 'lunch') : null;
+      var dateStr = payload.date || today();   // 과거 날짜 인증도 허용
       // 사진은 Firestore 문서에 압축 dataURL 로 인라인 저장 (별도 Storage 설정 불필요)
       var photo = payload.photo || null;
       if (photo && photo.length > 950000) { photo = null; console.warn('[wc] 사진 용량이 커서 제외됨(문서 1MB 한도)'); }
-      // 운동은 (나,오늘) 1건, 식단은 (나,오늘,끼니) 1건으로 중복 없이 갱신.
-      // (uid,date)로만 조회하고 category/slot은 클라이언트에서 매칭 → 별도 색인 불필요
-      return col.where('uid', '==', self.pid).where('date', '==', today()).get().then(function (qs) {
-        var match = null;
-        qs.docs.forEach(function (d) {
-          var dd = d.data(), dcat = dd.category || (dd.type === '식단' ? 'meal' : 'workout');
-          if (dcat !== cat) return;
-          if (cat === 'meal') { if ((dd.slot || null) === slot) match = d; }
-          else match = d;
-        });
-        var data = {
-          uid: self.pid, name: name, date: today(), createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
+      function buildData() {
+        return {
+          uid: self.pid, name: name, date: dateStr, createdAt: self.fb.firestore.FieldValue.serverTimestamp(),
           createdAtMs: Date.now(), category: cat, slot: slot,
           type: payload.type != null ? payload.type : null, duration: payload.duration != null ? payload.duration : null,
           message: payload.message || '', photoUrl: photo,
           kcal: payload.kcal != null ? payload.kcal : null,           // 식단 총 칼로리
           foods: Array.isArray(payload.foods) ? payload.foods : null   // [{name,kcal}]
         };
-        if (match) {
-          var prev = match.data();
-          if (!photo && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 기존 유지
+      }
+      // 수정: 지정한 문서만 갱신 (날짜는 payload.date 를 따름, 순서는 보존)
+      if (editId != null) {
+        var ref = col.doc(editId);
+        return ref.get().then(function (d) {
+          var data = buildData(), prev = d.exists ? d.data() : {};
+          if (!photo && prev.photoUrl) data.photoUrl = prev.photoUrl;
+          if (prev.createdAtMs) data.createdAtMs = prev.createdAtMs;
           data.cheers = prev.cheers || {};
-          return match.ref.set(data);
-        }
-        data.cheers = {};
-        return col.add(data);
-      });
+          return ref.set(data);
+        });
+      }
+      // 식단은 (나,그날,끼니) 1건 유지. (uid,date)로만 조회 → 별도 색인 불필요
+      if (cat === 'meal') {
+        return col.where('uid', '==', self.pid).where('date', '==', dateStr).get().then(function (qs) {
+          var match = null;
+          qs.docs.forEach(function (d) {
+            var dd = d.data(), dcat = dd.category || (dd.type === '식단' ? 'meal' : 'workout');
+            if (dcat === 'meal' && (dd.slot || null) === slot) match = d;
+          });
+          var data = buildData();
+          if (match) {
+            var prev = match.data();
+            if (!photo && prev.photoUrl) data.photoUrl = prev.photoUrl; // 사진 안 바꾸면 기존 유지
+            data.cheers = prev.cheers || {};
+            return match.ref.set(data);
+          }
+          data.cheers = {};
+          return col.add(data);
+        });
+      }
+      // 운동은 항상 새 기록 → 하루에 여러 번 누적
+      var wdata = buildData(); wdata.cheers = {};
+      return col.add(wdata);
     },
     toggleCheer: function (id) {
       var self = this;

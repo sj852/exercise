@@ -72,6 +72,7 @@
   /* ---------- 네비게이션 / 렌더 ---------- */
   function navTo(name) {
     if (name === 'meals') { mealState.date = today(); mealState.uid = null; }  // 식단 탭은 항상 오늘·나부터
+    if (name === 'home') { homeState.date = today(); homeState.uid = null; }   // 운동 탭도 항상 오늘·나부터
     currentScreen = name; render();
     document.querySelectorAll('.nav-item').forEach(function (b) { b.classList.toggle('active', b.dataset.screen === name); });
     view.scrollTop = 0;
@@ -148,16 +149,46 @@
       h('div', { class: 'participants' }, chips)
     ]);
 
-    var recent = workoutVerifs().slice().sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }).slice(0, 15);
-
     // 바로 운동 인증으로 넘어가는 버튼
-    var verifyCta = h('button', { class: 'home-cta', onclick: function () { draft = freshDraft(); draft.category = 'workout'; navTo('verify'); } },
+    var verifyCta = h('button', { class: 'home-cta', onclick: function () { draft = freshDraft(); draft.category = 'workout'; draft.date = homeState.date; navTo('verify'); } },
       [doneToday ? '💪 운동 한 번 더 인증하기' : '🔥 운동 인증하기']);
+
+    // 운동 기록 — 식단처럼 날짜 이동 + 참여자 필터(기본은 전체)
+    var hd = homeState.date, hIsToday = hd === today();
+    var hUid = homeState.uid; // null = 전체
+    if (hUid && s.participants.indexOf(hUid) < 0) hUid = homeState.uid = null;
+
+    var dayNav = h('div', { class: 'day-nav' }, [
+      h('button', { class: 'day-arrow', onclick: function () { homeState.date = addDays(hd, -1); render(); } }, ['‹']),
+      h('div', { class: 'day-label' }, [hIsToday ? '오늘 · ' + dateLabel(hd) : dateLabel(hd)]),
+      h('button', { class: 'day-arrow' + (hIsToday ? ' disabled' : ''), onclick: function () { if (!hIsToday) { homeState.date = addDays(hd, 1); render(); } } }, ['›'])
+    ]);
+
+    // 전체/참여자 필터 칩 — 탭하면 그 사람만, "전체"면 모두
+    var allChip = h('div', { class: 'p-chip sel' + (hUid == null ? ' active' : ''), onclick: function () { homeState.uid = null; render(); } }, [
+      h('div', { class: 'avatar allav', style: 'width:30px;height:30px;font-size:15px' }, ['👥']),
+      h('div', { class: 'p-name' }, ['전체']),
+      h('div', { class: 'kcal-sum' }, [allWorkoutsOn(hd).length + '회'])
+    ]);
+    var pChips = s.participants.map(function (uid) {
+      var cnt = workoutsOn(uid, hd).length, b = burnOn(uid, hd);
+      return h('div', { class: 'p-chip sel' + (uid === hUid ? ' active' : ''), onclick: function () { homeState.uid = uid; render(); } },
+        [avatar(uid, 30), h('div', { class: 'p-name' }, [person(uid).name]), h('div', { class: 'kcal-sum' }, [cnt ? cnt + '회 · ' + b.toLocaleString() + 'kcal' : '기록 없음'])]);
+    });
+    var wTotals = h('div', { class: 'participants', style: 'margin-top:4px' }, [allChip].concat(pChips));
+
+    var dayWk = hUid ? workoutsOn(hUid, hd) : allWorkoutsOn(hd);
+    var wSummary = hUid
+      ? h('div', { class: 'meal-daytotal' }, [(hUid === ME() ? '내' : person(hUid).name) + ' 소모 ', h('b', {}, [burnOn(hUid, hd).toLocaleString()]), ' kcal · ', h('b', {}, [String(dayWk.length)]), '회'])
+      : h('div', { class: 'meal-daytotal' }, ['이 날 운동 ', h('b', {}, [String(dayWk.length)]), '회']);
+    var wList = dayWk.length
+      ? h('div', { class: 'feed' }, dayWk.map(feedCard))
+      : h('div', { class: 'empty' }, [hIsToday ? '아직 운동 기록이 없어요. 위 버튼으로 인증해보세요! 📸' : '이 날은 운동 기록이 없어요']);
 
     return h('div', { class: 'screen' }, [
       header, reminder, challengeCard, verifyCta,
-      h('div', { class: 'section-label' }, ['친구들 운동 인증 피드']),
-      recent.length ? h('div', { class: 'feed' }, recent.map(feedCard)) : h('div', { class: 'empty' }, ['아직 운동 인증이 없어요. 첫 인증을 남겨보세요! 📸'])
+      h('div', { class: 'section-label' }, ['운동 기록']),
+      dayNav, wTotals, wSummary, wList
     ]);
   };
   function hatch(uid) {
@@ -197,19 +228,21 @@
   // 기존 인증을 수정: 값을 draft 로 불러와 인증 화면으로 이동 (같은 끼니/운동은 덮어쓰기됨)
   function editVerification(v) {
     draft = freshDraft();
+    draft.id = v.id;                     // 이 id 가 있으면 새로 만들지 않고 해당 기록만 갱신
+    draft.date = v.date || today();       // 원래 날짜 유지
     draft.category = isMeal(v) ? 'meal' : 'workout';
     draft.photo = v.photo || null;
     draft.message = v.message || '';
     if (draft.category === 'meal') { draft.slot = v.slot || 'lunch'; draft.kcal = v.kcal != null ? v.kcal : null; draft.foods = v.foods || null; }
     else { draft.type = v.type || null; draft.duration = v.duration || 30; }
     navTo('verify');
-    toast('수정 후 다시 인증하면 갱신돼요');
+    toast('수정 후 다시 저장하면 갱신돼요');
   }
 
   /* =====================================================================
      화면 2 · 인증 업로드
      ===================================================================== */
-  function freshDraft() { return { category: 'workout', slot: 'lunch', photo: null, type: null, duration: 30, message: '', kcal: null, foods: null, analyzing: false }; }
+  function freshDraft() { return { id: null, date: today(), category: 'workout', slot: 'lunch', photo: null, type: null, duration: 30, message: '', kcal: null, foods: null, analyzing: false }; }
   var draft = freshDraft();
   screens.verify = function () {
     var meal = draft.category === 'meal';
@@ -257,9 +290,21 @@
       ];
     }
 
+    // 인증 날짜 선택 — 전날 등 과거 날짜도 기록 가능(미래는 불가)
+    var vIsToday = draft.date === today();
+    var dateNav = h('div', { class: 'form-group', style: 'margin-top:14px' }, [
+      h('div', { class: 'field-label' }, ['인증 날짜']),
+      h('div', { class: 'day-nav' }, [
+        h('button', { class: 'day-arrow', onclick: function () { draft.date = addDays(draft.date, -1); render(); } }, ['‹']),
+        h('div', { class: 'day-label' }, [vIsToday ? '오늘 · ' + dateLabel(draft.date) : dateLabel(draft.date)]),
+        h('button', { class: 'day-arrow' + (vIsToday ? ' disabled' : ''), onclick: function () { if (!vIsToday) { draft.date = addDays(draft.date, 1); render(); } } }, ['›'])
+      ])
+    ]);
+
     return h('div', { class: 'screen' }, [
       h('div', { class: 'topbar' }, [h('button', { class: 'back', onclick: function () { navTo(meal ? 'meals' : 'home'); } }, ['←']), h('div', { class: 'topbar-title' }, [meal ? '식단 기록하기' : '운동 인증하기'])]),
       catToggle,
+      dateNav,
       h('label', { class: 'uploader', for: 'photoInput', style: 'margin-top:14px' }, uploaderInner), fileInput
     ].concat(body).concat([
       h('div', { class: 'form-group', style: 'margin-top:16px' }, [h('div', { class: 'field-label' }, ['한마디 남기기']), msgArea]),
@@ -339,20 +384,26 @@
   }
   function submitVerification() {
     var payload, dest;
+    var savedDate = draft.date || today();
     if (draft.category === 'meal') {
       if (!draft.slot) draft.slot = 'lunch';
-      payload = { category: 'meal', slot: draft.slot, message: draft.message.trim(), photo: draft.photo, kcal: draft.kcal, foods: draft.foods };
+      payload = { id: draft.id, date: savedDate, category: 'meal', slot: draft.slot, message: draft.message.trim(), photo: draft.photo, kcal: draft.kcal, foods: draft.foods };
       dest = 'meals';
     } else {
       if (!draft.type) { toast('운동 종류를 선택해주세요'); return; }
       var burned = DB.estimateBurn(draft.type, draft.duration, DB.getWeight());  // 소모 칼로리 계산·저장
-      payload = { category: 'workout', type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo, kcal: burned };
+      // id 가 있으면 그 운동 기록만 수정, 없으면 하루에 여러 건 누적(새 기록)
+      payload = { id: draft.id, date: savedDate, category: 'workout', type: draft.type, duration: draft.duration, message: draft.message.trim(), photo: draft.photo, kcal: burned };
       dest = 'home';
     }
     toast('저장 중...');
     DB.saveVerification(payload).then(function () {
       draft = freshDraft();
-      navTo(dest); toast(dest === 'meals' ? '식단 기록 완료! 🍽️' : '인증 완료! 🎉');
+      navTo(dest);
+      // 방금 기록한 날짜의 하루 보기로 이동 (과거 날짜 기록도 바로 확인)
+      if (dest === 'meals') mealState.date = savedDate; else homeState.date = savedDate;
+      render();
+      toast(dest === 'meals' ? '식단 기록 완료! 🍽️' : '인증 완료! 🎉');
     }).catch(function (e) { console.error(e); toast('저장 실패: ' + (e && e.message || '')); });
   }
   function downscaleImage(file, cb) {
@@ -406,11 +457,14 @@
      화면 4 · 식단 (하루 보기 · 날짜 이동)
      ===================================================================== */
   var mealState = { date: today(), uid: null };
+  var homeState = { date: today(), uid: null };
   var WEEK = ['일', '월', '화', '수', '목', '금', '토'];
   function dateLabel(d) { var dt = new Date(d + 'T00:00:00'); return (dt.getMonth() + 1) + '월 ' + dt.getDate() + '일 (' + WEEK[dt.getDay()] + ')'; }
   function mealsOn(uid, d) { return mealVerifs().filter(function (v) { return v.userId === uid && v.date === d; }); }
   function kcalOn(uid, d) { return mealsOn(uid, d).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
-  function burnOn(uid, d) { return workoutVerifs().filter(function (v) { return v.userId === uid && v.date === d; }).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
+  function burnOn(uid, d) { return workoutsOn(uid, d).reduce(function (a, v) { return a + (v.kcal || 0); }, 0); }
+  function workoutsOn(uid, d) { return workoutVerifs().filter(function (v) { return v.userId === uid && v.date === d; }).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }); }
+  function allWorkoutsOn(d) { return workoutVerifs().filter(function (v) { return v.date === d; }).sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); }); }
   function energyCell(label, val, cls) { return h('div', { class: 'energy-cell ' + cls }, [h('div', { class: 'ec-val' }, [val.toLocaleString()]), h('div', { class: 'ec-label' }, [label])]); }
 
   screens.meals = function () {
@@ -433,8 +487,8 @@
         [avatar(uid, 30), h('div', { class: 'p-name' }, [person(uid).name]), h('div', { class: 'kcal-sum' }, [kcalOn(uid, d).toLocaleString() + ' kcal'])]);
     }));
 
-    // 선택한 사람의 끼니별 기록 (수정/추가는 본인 + 오늘일 때만)
-    var canEdit = mine && isToday;
+    // 선택한 사람의 끼니별 기록 (본인이면 과거 날짜도 수정/추가 가능)
+    var canEdit = mine;
     var meals = mealsOn(viewUid, d);
     var dayTotal = kcalOn(viewUid, d);
     var slotRows = MEAL_SLOTS.map(function (s) {
@@ -455,7 +509,7 @@
       return h('div', { class: 'meal-slot empty' }, [
         h('div', { class: 'ms-emoji faded' }, ['🍽']),
         h('div', { class: 'ms-body' }, [h('div', { class: 'ms-top' }, [h('span', { class: 'ms-slot' }, [s.label]), h('span', { class: 'ms-none' }, ['기록 없음'])])]),
-        canEdit ? h('button', { class: 'ms-add', onclick: function () { draft = freshDraft(); draft.category = 'meal'; draft.slot = s.key; navTo('verify'); } }, ['+ 기록']) : null
+        canEdit ? h('button', { class: 'ms-add', onclick: function () { draft = freshDraft(); draft.category = 'meal'; draft.slot = s.key; draft.date = d; navTo('verify'); } }, ['+ 기록']) : null
       ]);
     });
 
@@ -482,10 +536,10 @@
       }
       var footer;
       if (canEdit) {
-        // 오늘은 몸무게를 이 날짜에 기록 — 과거 날짜 값은 그대로 보존됨
+        // 몸무게를 "보고 있는 날짜"에 기록 — 다른 날짜 값은 그대로 보존됨
         var wIn = h('input', { type: 'number', class: 'w-day-in', inputmode: 'numeric', min: '20', max: '250', value: String(wUsed) });
         wIn.addEventListener('input', function () { var w = +wIn.value || 0; if (w > 0) DB.logWeight(d, w); refreshEnergy(); });
-        footer = h('div', { class: 'energy-weight' }, [h('span', { class: 'ew-label' }, ['오늘 몸무게']), wIn, h('span', { class: 'ew-unit' }, ['kg']), h('span', { class: 'ew-note' }, ['(이 날 기준으로 저장)'])]);
+        footer = h('div', { class: 'energy-weight' }, [h('span', { class: 'ew-label' }, [isToday ? '오늘 몸무게' : '이 날 몸무게']), wIn, h('span', { class: 'ew-unit' }, ['kg']), h('span', { class: 'ew-note' }, ['(이 날 기준 저장)'])]);
       } else {
         footer = h('div', { class: 'energy-hint' }, ['이 날 몸무게 ' + wUsed.toLocaleString() + 'kg 기준 · 기초대사량은 신체정보로 대략 계산돼요.']);
       }
